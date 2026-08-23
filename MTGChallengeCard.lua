@@ -453,10 +453,39 @@ local function ModuleFields(run, ch)
     return result
 end
 
+--- The heroes who rolled, small and in full colour. Unlike the slots, which
+--- grey a spent token out, this is a summary and wants to be readable.
 --- @param run MTGRun
 --- @param inst table
+--- @return Panel[]
+local function RollerTokens(run, inst)
+    local result = {}
+    for _, slot in ipairs({ "lead", "assist" }) do
+        local placed = inst[slot]
+        if placed ~= nil and inst[slot .. "Roll"] ~= nil then
+            local token = dmhub.GetCharacterById(placed.charid)
+            local p = MTGRun.Participant(run, placed.charid)
+            if token ~= nil then
+                result[#result + 1] = gui.CreateTokenImage(token, {
+                    width = 22,
+                    height = 22,
+                    halign = "right",
+                    valign = "center",
+                    lmargin = 3,
+                    hover = gui.Tooltip(string.format("%s (%s)",
+                        p ~= nil and p.name or "", slot)),
+                })
+            end
+        end
+    end
+    return result
+end
+
+--- @param run MTGRun
+--- @param inst table
+--- @param expanded table<string, boolean> the Director's overrides, by instance
 --- @return Panel
-function MTGChallengeCard.Create(run, inst)
+function MTGChallengeCard.Create(run, inst, expanded)
     local ch = MTGRun.ChallengeFor(run, inst)
     if ch == nil then
         return gui.Panel{ width = 0, height = 0 }
@@ -465,9 +494,23 @@ function MTGChallengeCard.Create(run, inst)
     local adjudicated = inst.adjudicatedInRound ~= nil
     local status = MTGRules.GetOrDefault(run.moduleId).ChallengeStatus(run, inst, ch)
 
+    --A settled row folds itself away. One still waiting on a human -- a T&O
+    --tier 2 -- has not settled, so it stays open with its buttons reachable.
+    expanded = expanded or {}
+    local open = expanded[inst.id]
+    if open == nil then
+        open = not adjudicated
+    end
+
     local badges = {}
-    if ch.repeatable == true then
+    if ch.repeatable == true and not adjudicated then
         badges[#badges + 1] = Badge(MTGConstants.iconRepeatable, "Repeatable")
+    end
+
+    if not open then
+        for _, token in ipairs(RollerTokens(run, inst)) do
+            badges[#badges + 1] = token
+        end
     end
 
     local resolving = inst.resolution ~= nil
@@ -505,6 +548,32 @@ function MTGChallengeCard.Create(run, inst)
 
     badges[#badges + 1] = Badge(status.icon, status.tooltip, status.tone)
 
+    local body = gui.Panel{
+        classes = { cond(not open, "collapsed") },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+    }
+
+    local arrowArgs = {
+        classes = { "bgFgStrong" },
+        width = 12,
+        height = 12,
+        halign = "left",
+        valign = "center",
+        rmargin = 4,
+    }
+    if open then
+        arrowArgs.classes[#arrowArgs.classes + 1] = "expanded"
+    end
+    arrowArgs.click = function(element)
+        local nowOpen = not element:HasClass("expanded")
+        element:SetClass("expanded", nowOpen)
+        expanded[inst.id] = nowOpen
+        body:SetClass("collapsed", not nowOpen)
+    end
+
     local children = {
         gui.Panel{
             width = "100%",
@@ -512,9 +581,11 @@ function MTGChallengeCard.Create(run, inst)
             flow = "horizontal",
             valign = "top",
 
+            gui.ExpandoArrow(arrowArgs),
+
             gui.Label{
                 classes = { "sizeS", "bold" },
-                width = "62%",
+                width = "58%",
                 height = "auto",
                 halign = "left",
                 valign = "center",
@@ -532,8 +603,10 @@ function MTGChallengeCard.Create(run, inst)
         },
     }
 
+    local bodyChildren = {}
+
     if ch.description ~= nil and ch.description ~= "" then
-        children[#children + 1] = gui.Label{
+        bodyChildren[#bodyChildren + 1] = gui.Label{
             classes = { "sizeXs", "noBold" },
             width = "100%",
             height = "auto",
@@ -564,7 +637,7 @@ function MTGChallengeCard.Create(run, inst)
     metaLines[#metaLines + 1] = MetaLine("Skills", MTGUtils.NameList(
         ch:try_get("allowedSkills", {}), MTGUtils.SkillName, "none"))
 
-    children[#children + 1] = gui.Panel{
+    bodyChildren[#bodyChildren + 1] = gui.Panel{
         width = "100%",
         height = "auto",
         flow = "horizontal",
@@ -583,6 +656,9 @@ function MTGChallengeCard.Create(run, inst)
         SlotColumn(run, inst, ch, "lead", "Lead"),
         SlotColumn(run, inst, ch, "assist", "Assist"),
     }
+
+    body.children = bodyChildren
+    children[#children + 1] = body
 
     return gui.Panel{
         classes = { "bordered", cond(adjudicated, "disabled") },

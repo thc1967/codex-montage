@@ -23,8 +23,10 @@ MTGRules.Register{
             if ra ~= rb then
                 return ra < rb
             end
-            local ta = a:FieldsFor(MTGConstants.moduleTO).type or "threat"
-            local tb = b:FieldsFor(MTGConstants.moduleTO).type or "threat"
+            --Threats first, by rank rather than by spelling: "opportunity"
+            --sorts ahead of "threat" alphabetically, which is the wrong way up.
+            local ta = cond(a:FieldsFor(MTGConstants.moduleTO).type == "opportunity", 2, 1)
+            local tb = cond(b:FieldsFor(MTGConstants.moduleTO).type == "opportunity", 2, 1)
             if ta ~= tb then
                 return ta < tb
             end
@@ -41,6 +43,19 @@ MTGRules.Register{
     --- @return {icon: string, tooltip: string}
     ChallengeStatus = function(run, inst, ch)
         local isThreat = ch:FieldsFor(MTGConstants.moduleTO).type ~= "opportunity"
+
+        --A finished attempt reports itself. The Challenge may still be
+        --unresolved -- that is what the fresh row underneath is for -- but
+        --this row is over and says what it produced.
+        if inst.adjudicatedInRound ~= nil then
+            local outcome = inst.outcome or {}
+            local failed = outcome.tone == "danger"
+            return {
+                icon = cond(failed, MTGConstants.iconFailure, MTGConstants.iconSuccess),
+                tone = cond(failed, "danger", "success"),
+                tooltip = outcome.label or "Resolved",
+            }
+        end
 
         if MTGRun.ChallengeModuleState(run, ch.id).resolved == true then
             return {

@@ -9,9 +9,11 @@ function MTGRunPanel.Create(opts)
     opts = opts or {}
     local director = opts.director == true
 
-    --Expansion the Director chose, by round. Absent means "follow the
-    --default": the current round is open, earlier ones are folded away.
+    --Expansion this client chose, by round and by challenge row. Absent means
+    --"follow the default": the current round is open, earlier ones folded, and
+    --a challenge folds once it has an outcome.
     local m_expanded = {}
+    local m_cardExpanded = {}
 
     local titleLabel = gui.Label{
         classes = { "tableLabel" },
@@ -174,7 +176,7 @@ function MTGRunPanel.Create(opts)
 
                 local bodyChildren = {}
                 for _, inst in ipairs(ordered) do
-                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst)
+                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded)
                 end
                 body.children = bodyChildren
 

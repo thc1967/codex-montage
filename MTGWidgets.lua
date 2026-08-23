@@ -233,25 +233,6 @@ function MTGWidgets.Tray(participants, onReturn)
     }
 end
 
---- Border companion to ToneClass, so an empty bar still reads as its colour.
---- @param tone string|nil
---- @return string
-function MTGWidgets.ToneBorderClass(tone)
-    if tone == "success" then
-        return "borderSuccess"
-    end
-    if tone == "danger" then
-        return "borderDanger"
-    end
-    if tone == "warning" then
-        return "borderWarning"
-    end
-    if tone == "info" then
-        return "borderInfo"
-    end
-    return nil
-end
-
 --- A progress meter. The module supplies label, value, max and the optional
 --- detail line; the shell never composes that text itself.
 --- @param meter table a DescribeProgress() entry
@@ -259,66 +240,54 @@ end
 function MTGWidgets.Meter(meter)
     local max = meter.max or 0
     local value = math.min(meter.value or 0, max)
-    local fill = "0%"
-    if max > 0 then
-        fill = string.format("%d%%", math.floor((value / max) * 100))
+
+    local earnedIcon = cond(meter.tone == "danger",
+        MTGConstants.iconFailure, MTGConstants.iconSuccess)
+
+    local pips = {}
+    for i = 1, max do
+        local earned = i <= value
+        pips[#pips + 1] = gui.Panel{
+            classes = { cond(earned, MTGWidgets.ToneClass(meter.tone), "bgFgMuted") },
+            width = 22,
+            height = 22,
+            halign = "left",
+            valign = "center",
+            rmargin = 2,
+            vmargin = 1,
+            bgimage = cond(earned, earnedIcon, MTGConstants.iconPending),
+        }
     end
 
-    local trackClasses = {}
-    local borderClass = MTGWidgets.ToneBorderClass(meter.tone)
-    if borderClass ~= nil then
-        trackClasses[#trackClasses + 1] = borderClass
-    end
+    --Wraps rather than clips: a Director who sets a big limit gets a second
+    --row instead of pips disappearing off the edge.
+    local pipRow = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        wrap = true,
+        halign = "left",
+        valign = "top",
+        tmargin = 2,
+        children = pips,
+    }
 
     local children = {
-        gui.Panel{
+        gui.Label{
+            classes = { "sizeS" },
             width = "100%",
             height = "auto",
-            flow = "horizontal",
+            halign = "left",
             valign = "top",
-
-            gui.Label{
-                classes = { "sizeS" },
-                width = "70%",
-                height = "auto",
-                halign = "left",
-                valign = "center",
-                text = meter.label or "",
-            },
-
-            gui.Label{
-                classes = { "sizeS", "number" },
-                width = "28%",
-                height = "auto",
-                halign = "right",
-                valign = "center",
-                textAlignment = "right",
-                text = string.format("%d / %d", meter.value or 0, max),
-            },
+            text = string.format("%s (%d/%d)", meter.label or "", meter.value or 0, max),
         },
 
-        --The border is what carries the tone while the bar is still empty.
-        gui.Panel{
-            classes = trackClasses,
-            width = "100%",
-            height = 20,
-            valign = "top",
-            tmargin = 2,
-            flow = "none",
-            bgimage = true,
-            bgcolor = "clear",
-            borderWidth = 1,
-            cornerRadius = 0,
-
-            gui.Panel{
-                classes = { MTGWidgets.ToneClass(meter.tone) },
-                width = fill,
-                height = "100%",
-                halign = "left",
-                valign = "center",
-                cornerRadius = 0,
-            },
-        },
+        --One pip per point, in the same vocabulary the challenge rows use:
+        --unknown until it lands, then a check or an x. These are counts of
+        --events, never fractions, so a bar would imply a granularity that
+        --does not exist -- and at these magnitudes the pips are countable at
+        --a glance without reading the numeral.
+        pipRow,
     }
 
     if meter.detail ~= nil and meter.detail ~= "" then

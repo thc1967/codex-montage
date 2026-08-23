@@ -63,7 +63,7 @@ function MTGImportPanel.Create(onDone)
 
     local templateDropdown = gui.Dropdown{
         classes = { "formStacked", "sizeS" },
-        width = 160,
+        width = 240,
         halign = "left",
         valign = "center",
         rmargin = 8,

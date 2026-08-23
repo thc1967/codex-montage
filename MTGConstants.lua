@@ -15,7 +15,7 @@ MTGConstants.iconRoll = "ui-icons/dsdice/djordice-d10.png"
 MTGConstants.iconVictory = "drawsteel/HeroicResources/T_UI_ICON_FLAT_HR_VICTORY.png"
 MTGConstants.iconPending = "phosphor/question-light.png"
 MTGConstants.iconSuccess = "phosphor/check-circle.png"
-MTGConstants.iconFailure = "phosphor/warning-circle-bold.png"
+MTGConstants.iconFailure = "phosphor/x-circle.png"
 
 --- Seconds the celebration stays reachable, counted from when it goes out.
 --- It is a moment, not a surface: past this a reconnecting client no longer
