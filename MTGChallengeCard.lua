@@ -461,9 +461,10 @@ end
 
 --- @param run MTGRun
 --- @param inst table
---- @param expanded table<string, boolean> the Director's overrides, by instance
+--- @param expanded table<string, boolean> this client's overrides, by instance
+--- @param director boolean
 --- @return Panel
-function MTGChallengeCard.Create(run, inst, expanded)
+function MTGChallengeCard.Create(run, inst, expanded, director)
     local ch = MTGRun.ChallengeFor(run, inst)
     if ch == nil then
         return gui.Panel{ width = 0, height = 0 }
@@ -472,12 +473,13 @@ function MTGChallengeCard.Create(run, inst, expanded)
     local adjudicated = inst.adjudicatedInRound ~= nil
     local status = MTGRules.GetOrDefault(run.moduleId).ChallengeStatus(run, inst, ch)
 
-    --A settled row folds itself away. One still waiting on a human -- a T&O
-    --tier 2 -- has not settled, so it stays open with its buttons reachable.
+    --Players open rows deliberately. The Director wants the live ones already
+    --open -- a T&O tier 2 has not settled, so its buttons stay reachable --
+    --and only the settled ones folded away.
     expanded = expanded or {}
     local open = expanded[inst.id]
     if open == nil then
-        open = not adjudicated
+        open = director and not adjudicated
     end
 
     local badges = {}

@@ -16,6 +16,10 @@ MTGConstants.iconGrant = "phosphor/check-fat-duotone.png"
 MTGConstants.iconVictory = "drawsteel/HeroicResources/T_UI_ICON_FLAT_HR_VICTORY.png"
 MTGConstants.iconPending = "phosphor/circle-duotone.png" --"phosphor/circle-duotone.png"
 MTGConstants.iconSuccess = "phosphor/check-circle.png"
+
+--- Shown in the editor when a Challenge has every field it needs. Distinct in
+--- meaning from iconSuccess even though it shares the asset.
+MTGConstants.iconConfigured = "phosphor/check-circle.png"
 MTGConstants.iconFailure = "phosphor/x-circle.png"
 
 --- Seconds the celebration stays reachable, counted from when it goes out.
@@ -34,6 +38,10 @@ MTGConstants.modifierRollType = "test_power_roll"
 --- so this doubles as "effectively unlimited" for legacy data that stored
 --- repeatable as a plain true.
 MTGConstants.repeatMax = 99
+
+--- The latest round a Challenge can be held back to. Two digits, matching the
+--- stepper's input width.
+MTGConstants.roundMax = 99
 
 MTGConstants.moduleBaseline = "baseline"
 MTGConstants.moduleTO = "to"

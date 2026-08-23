@@ -89,35 +89,74 @@ function MTGRun.Mutate(description, fn)
     doc:CompleteChange(description)
 end
 
---- Characters eligible to be seeded into a Run: the same population the combat
---- launcher treats as the player side.
+--- Characters eligible to be seeded into a Run: the default player party, plus
+--- anyone handed to a specific player. Narrower than the combat launcher, which
+--- also sweeps in the ally parties, and wider than the map, which only holds
+--- whoever happens to be placed right now.
 --- @return MTGParticipant[]
 function MTGRun.EligibleParticipants()
     local result = {}
+    local seen = {}
     local partyId = GetDefaultPartyID()
-    local party = GetParty(partyId)
 
+    local placed = {}
     for _, token in ipairs(dmhub.allTokens) do
-        if token ~= nil and token.valid and token.properties ~= nil then
-            local tokenParty = token.partyId
-            local playerSide = tokenParty ~= nil and (tokenParty == partyId
-                or (party ~= nil and party:GetAllyParties()[tokenParty] ~= nil))
-            if not playerSide and token.playerControlled then
-                playerSide = true
-            end
+        if token ~= nil and token.valid then
+            placed[token.charid] = true
+        end
+    end
 
-            if playerSide then
-                local isHero = false
-                pcall(function()
-                    isHero = token.properties:IsHero()
-                end)
+    --- @param charid string
+    --- @param inDefaultParty boolean
+    local function Consider(charid, inDefaultParty)
+        if charid == nil or seen[charid] then
+            return
+        end
 
-                result[#result + 1] = MTGParticipant.CreateNew{
-                    charid = token.charid,
-                    name = token.name or "",
-                    isHero = isHero,
-                }
-            end
+        local token = dmhub.GetCharacterById(charid)
+        if token == nil or token.properties == nil then
+            return
+        end
+
+        --playerControlled is also true for party-shared tokens, so it is too
+        --wide here; NotShared is the one that means a named owner.
+        if not inDefaultParty and token.playerControlledNotShared ~= true then
+            return
+        end
+
+        seen[charid] = true
+
+        local isHero = false
+        pcall(function()
+            isHero = token.properties:IsHero()
+        end)
+
+        result[#result + 1] = MTGParticipant.CreateNew{
+            charid = charid,
+            name = token.name or "",
+            isHero = isHero,
+            --Off the map means not in the scene, so it is offered but not
+            --ticked. The Director opts them in.
+            included = placed[charid] == true,
+        }
+    end
+
+    --Named explicitly rather than through unhidden_pairs below, so a hidden
+    --player party still seeds.
+    for _, charid in ipairs(dmhub.GetCharacterIdsInParty(partyId) or {}) do
+        Consider(charid, true)
+    end
+
+    for pid, _ in unhidden_pairs(dmhub.GetTable(Party.tableName) or {}) do
+        for _, charid in ipairs(dmhub.GetCharacterIdsInParty(pid) or {}) do
+            Consider(charid, pid == partyId)
+        end
+    end
+
+    --Catches anyone assigned to a player but belonging to no party at all.
+    for _, token in ipairs(dmhub.allTokens) do
+        if token ~= nil and token.valid then
+            Consider(token.charid, token.partyId == partyId)
         end
     end
 

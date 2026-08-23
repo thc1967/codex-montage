@@ -239,6 +239,39 @@ MTGRules.Register{
         }
     end,
 
+    --- Whether an authored Challenge has everything it needs to run. The
+    --- module's own fields come from ChallengeFields(), so declaring a new one
+    --- gets it checked here without an override.
+    --- @param ch MTGChallengeDef
+    --- @param moduleId string
+    --- @return boolean
+    IsChallengeComplete = function(ch, moduleId)
+        if string.trim(ch.name or "") == "" then
+            return false
+        end
+        if (tonumber(ch.availableFromRound) or 0) < 1 then
+            return false
+        end
+        if string.trim(ch.description or "") == "" then
+            return false
+        end
+        if #ch:try_get("allowedCharacteristics", {}) < 1 then
+            return false
+        end
+        if #ch:try_get("allowedSkills", {}) < 1 then
+            return false
+        end
+
+        for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
+            local value = ch:FieldValue(moduleId, field)
+            if value == nil or string.trim(tostring(value)) == "" then
+                return false
+            end
+        end
+
+        return true
+    end,
+
     --- Fields this module adds to every Challenge.
     --- @return table[]
     ChallengeFields = function()

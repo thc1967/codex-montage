@@ -3,10 +3,6 @@ local mod = dmhub.GetModLoading()
 --- Authoring surface for the selected Montage Definition.
 MTGEditorPanel = {}
 
---- Reorder arrows. One asset, flipped vertically for the up direction, the
---- way the theme flips pagingArrow horizontally for its right variant.
-local CARET = "phosphor/caret-down-fill.png"
-
 --- Fields per horizontal band of the settings form.
 local FIELDS_ACROSS = 3
 local FIELD_WIDTH = "30%"
@@ -16,32 +12,30 @@ local FIELD_WIDTH = "30%"
 --- @param width string
 --- @param control Panel
 --- @return Panel
---- A "- [n] +" stepper for how many further attempts a Challenge allows.
---- @param defid string
---- @param chid string
---- @param ch MTGChallengeDef
+--- A "- [n] +" stepper over a bounded integer.
+--- @param opts {value: number, min: number, max: number, commit: fun(n: number)}
 --- @return Panel
-local function RepeatStepper(defid, chid, ch)
+local function Stepper(opts)
     local input
 
     local function Commit(value)
-        local n = math.max(0, math.min(MTGConstants.repeatMax, math.floor(value or 0)))
+        local n = math.max(opts.min, math.min(opts.max, math.floor(value or opts.min)))
         input.text = tostring(n)
-        MTGDefinition.SetChallengeField(defid, chid, "repeatable", n)
+        opts.commit(n)
     end
 
     input = gui.Input{
         classes = { "formStacked", "sizeXs" },
-        width = "40%",
+        width = "20%",
         height = 22,
         halign = "left",
         valign = "center",
         numeric = true,
         characterLimit = 2,
         textAlignment = "center",
-        text = tostring(ch:RepeatLimit()),
+        text = tostring(opts.value),
         change = function(element)
-            Commit(tonumber(element.text) or 0)
+            Commit(tonumber(element.text) or opts.min)
         end,
     }
 
@@ -60,7 +54,7 @@ local function RepeatStepper(defid, chid, ch)
             halign = "left",
             valign = "center",
             press = function()
-                Commit((tonumber(input.text) or 0) - 1)
+                Commit((tonumber(input.text) or opts.min) - 1)
             end,
         },
 
@@ -74,7 +68,7 @@ local function RepeatStepper(defid, chid, ch)
             halign = "left",
             valign = "center",
             press = function()
-                Commit((tonumber(input.text) or 0) + 1)
+                Commit((tonumber(input.text) or opts.min) + 1)
             end,
         },
     }
@@ -208,30 +202,63 @@ local function SkillsPicker(defid, ch)
         })
 end
 
+--- What the title bar carries while a Challenge is folded. Only choice fields
+--- join in; a free-text one would swamp the row.
+--- @param ch MTGChallengeDef
+--- @param moduleId string
+--- @return string
+local function SummaryText(ch, moduleId)
+    local parts = {
+        "Round " .. tostring(ch.availableFromRound or 1),
+        "Repeats " .. tostring(ch:RepeatLimit()),
+    }
+
+    for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
+        if field.type == "choice" then
+            local value = ch:FieldValue(moduleId, field)
+            for _, option in ipairs(field.options or {}) do
+                if option.id == value then
+                    parts[#parts + 1] = option.text
+                end
+            end
+        end
+    end
+
+    return table.concat(parts, ", ")
+end
+
 --- One authored Challenge.
 --- @param defid string
 --- @param def MTGDefinition
 --- @param ch MTGChallengeDef
 --- @param index number
---- @param count number
+--- @param expanded table<string, boolean> this client's fold state, by challenge
 --- @return Panel
-local function ChallengeCard(defid, def, ch, index, count)
+local function ChallengeCard(defid, def, ch, index, expanded)
     local chid = ch.id
     local moduleId = def.moduleId
+    local complete = MTGRules.GetOrDefault(moduleId).IsChallengeComplete(ch, moduleId)
+
+    --Decided on first sight and then remembered: a finished challenge folds
+    --away, one still missing fields stays open. Recording it means typing the
+    --last field does not snap the card shut mid-edit.
+    local open = expanded[chid]
+    if open == nil then
+        open = not complete
+        expanded[chid] = open
+    end
 
     local moduleFields = {}
     for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
         moduleFields[#moduleFields + 1] = ChallengeModuleField(defid, ch, moduleId, field)
     end
 
-    return gui.Panel{
-        classes = { "bordered" },
-        width = "96%",
+    local body = gui.Panel{
+        classes = { cond(not open, "collapsed") },
+        width = "100%",
         height = "auto",
         flow = "vertical",
         valign = "top",
-        pad = 8,
-        vmargin = 4,
 
         gui.Panel{
             width = "100%",
@@ -239,7 +266,7 @@ local function ChallengeCard(defid, def, ch, index, count)
             flow = "horizontal",
             valign = "top",
 
-            FormRow("Challenge " .. tostring(index), "42%", gui.Input{
+            FormRow("Name", "42%", gui.Input{
                 classes = { "formStacked", "sizeS" },
                 text = ch.name or "",
                 characterLimit = 80,
@@ -253,68 +280,23 @@ local function ChallengeCard(defid, def, ch, index, count)
                 end,
             }),
 
-            FormRow("From Round", "16%", gui.Input{
-                classes = { "formStacked", "sizeXs" },
-                numeric = true,
-                characterLimit = 2,
-                text = tostring(ch.availableFromRound or 1),
-                change = function(element)
-                    local n = math.max(1, math.floor(tonumber(element.text) or 1))
-                    element.text = tostring(n)
+            FormRow("From Round", "16%", Stepper{
+                value = ch.availableFromRound or 1,
+                min = 1,
+                max = MTGConstants.roundMax,
+                commit = function(n)
                     MTGDefinition.SetChallengeField(defid, chid, "availableFromRound", n)
                 end,
             }),
 
-            FormRow("Repeats", "16%", RepeatStepper(defid, chid, ch)),
-
-            gui.Panel{
-                width = "14%",
-                height = "auto",
-                flow = "horizontal",
-                halign = "right",
-                valign = "top",
-
-                gui.Panel{
-                    classes = { "bgFg", "hoverable", cond(index <= 1, "hidden") },
-                    bgimage = CARET,
-                    scale = { x = 1, y = -1 },
-                    width = 16,
-                    height = 16,
-                    halign = "right",
-                    valign = "center",
-                    hmargin = 2,
-                    hover = gui.Tooltip("Move earlier"),
-                    press = function()
-                        MTGDefinition.MoveChallenge(defid, chid, -1)
-                    end,
-                },
-
-                gui.Panel{
-                    classes = { "bgFg", "hoverable", cond(index >= count, "hidden") },
-                    bgimage = CARET,
-                    width = 16,
-                    height = 16,
-                    halign = "right",
-                    valign = "center",
-                    hmargin = 2,
-                    hover = gui.Tooltip("Move later"),
-                    press = function()
-                        MTGDefinition.MoveChallenge(defid, chid, 1)
-                    end,
-                },
-
-                gui.Button{
-                    classes = { "deleteButton", "sizeXs" },
-                    halign = "right",
-                    valign = "top",
-                    hmargin = 2,
-                    requireConfirm = true,
-                    hover = gui.Tooltip("Remove this challenge"),
-                    click = function()
-                        MTGDefinition.RemoveChallenge(defid, chid)
-                    end,
-                },
-            },
+            FormRow("Repeats", "16%", Stepper{
+                value = ch:RepeatLimit(),
+                min = 0,
+                max = MTGConstants.repeatMax,
+                commit = function(n)
+                    MTGDefinition.SetChallengeField(defid, chid, "repeatable", n)
+                end,
+            }),
         },
 
         gui.Panel{
@@ -350,6 +332,103 @@ local function ChallengeCard(defid, def, ch, index, count)
             valign = "top",
             children = moduleFields,
         },
+    }
+
+    local summaryLabel = gui.Label{
+        classes = { "sizeS", "fgMuted", cond(open, "collapsed") },
+        width = "auto",
+        height = "auto",
+        halign = "left",
+        valign = "center",
+        lmargin = 12,
+        text = SummaryText(ch, moduleId),
+    }
+
+    local topRight = {}
+
+    if complete then
+        topRight[#topRight + 1] = gui.Panel{
+            classes = { "image" },
+            bgimage = MTGConstants.iconConfigured,
+            width = 16,
+            height = 16,
+            halign = "right",
+            valign = "center",
+            hmargin = 2,
+            hover = gui.Tooltip("Ready to run"),
+        }
+    end
+
+    topRight[#topRight + 1] = gui.Button{
+        classes = { "deleteButton", "sizeXs" },
+        halign = "right",
+        valign = "top",
+        hmargin = 2,
+        requireConfirm = true,
+        hover = gui.Tooltip("Remove this challenge"),
+        click = function()
+            MTGDefinition.RemoveChallenge(defid, chid)
+        end,
+    }
+
+    local arrowArgs = {
+        classes = { "bgFgStrong" },
+        width = 12,
+        height = 12,
+        halign = "left",
+        valign = "center",
+        rmargin = 4,
+    }
+    if open then
+        arrowArgs.classes[#arrowArgs.classes + 1] = "expanded"
+    end
+    arrowArgs.click = function(element)
+        local nowOpen = not element:HasClass("expanded")
+        element:SetClass("expanded", nowOpen)
+        expanded[chid] = nowOpen
+        body:SetClass("collapsed", not nowOpen)
+        summaryLabel:SetClass("collapsed", nowOpen)
+    end
+
+    return gui.Panel{
+        classes = { "bordered" },
+        width = "96%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        pad = 8,
+        vmargin = 4,
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            gui.ExpandoArrow(arrowArgs),
+
+            gui.Label{
+                classes = { "sizeS", "bold" },
+                width = "auto",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                text = "Challenge " .. tostring(index),
+            },
+
+            summaryLabel,
+
+            gui.Panel{
+                width = "14%",
+                height = "auto",
+                flow = "horizontal",
+                halign = "right",
+                valign = "top",
+                children = topRight,
+            },
+        },
+
+        body,
     }
 end
 
@@ -390,6 +469,10 @@ end
 --- @return Panel
 function MTGEditorPanel.Create()
     local m_defid = nil
+
+    --Fold state this client chose, by challenge. Absent means open, so a
+    --freshly authored challenge lands with its fields in reach.
+    local m_cardExpanded = {}
 
     local settingsPanel = gui.Panel{
         width = "100%",
@@ -563,7 +646,7 @@ function MTGEditorPanel.Create()
             local challenges = def:try_get("challenges", {})
             local cards = {}
             for i, ch in ipairs(challenges) do
-                cards[#cards + 1] = ChallengeCard(m_defid, def, ch, i, #challenges)
+                cards[#cards + 1] = ChallengeCard(m_defid, def, ch, i, m_cardExpanded)
             end
             challengesPanel.children = cards
             noChallengesLabel:SetClass("collapsed", #challenges > 0)

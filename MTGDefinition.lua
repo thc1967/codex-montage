@@ -403,28 +403,6 @@ end
 
 --- @param defid string
 --- @param challengeId string
---- @param delta number -1 to move earlier, 1 to move later
-function MTGDefinition.MoveChallenge(defid, challengeId, delta)
-    MTGDefinition.Mutate("Reorder challenges", function(defs)
-        local def = defs[defid]
-        if def == nil then
-            return
-        end
-        local _, index = MTGDefinition.FindChallenge(def, challengeId)
-        if index == nil then
-            return
-        end
-        local target = index + delta
-        if target < 1 or target > #def.challenges then
-            return
-        end
-        local ch = table.remove(def.challenges, index)
-        table.insert(def.challenges, target, ch)
-    end)
-end
-
---- @param defid string
---- @param challengeId string
 --- @param key string
 --- @param value any
 function MTGDefinition.SetChallengeField(defid, challengeId, key, value)

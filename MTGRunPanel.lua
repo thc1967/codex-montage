@@ -176,7 +176,7 @@ function MTGRunPanel.Create(opts)
 
                 local bodyChildren = {}
                 for _, inst in ipairs(ordered) do
-                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded)
+                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded, director)
                 end
                 body.children = bodyChildren
 
