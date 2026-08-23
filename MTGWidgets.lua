@@ -88,8 +88,6 @@ function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
             if target == nil then
                 return
             end
-            print("THC:: montage drop " .. tostring(p.name) .. " onto " ..
-                cond(target:HasClass("mtgTray"), "tray", "slot"))
             if target:HasClass("mtgTray") then
                 target:FireEvent("dropToTray", p.charid)
             else
