@@ -42,7 +42,10 @@ local function Slot(run, inst, slot, label)
     if placed ~= nil then
         local p = MTGRun.Participant(run, placed.charid)
         if p ~= nil then
-            local token = MTGWidgets.ParticipantToken(p, not inert, removeMenu, inert)
+            --Grey means "already acted this round", which outlives this row:
+            --a spent slot and a hero who has taken a test both read the same.
+            local dimmed = inert or MTGRun.HasActedThisRound(run, placed.charid)
+            local token = MTGWidgets.ParticipantToken(p, not inert, removeMenu, dimmed)
             if token ~= nil then
                 children[#children + 1] = token
             end
@@ -243,33 +246,8 @@ local function RollSummary(run, inst, ch, slot, assignment, roll)
         verdict = MTGRules.GetOrDefault(run.moduleId).RollToOutcome(run, ch, roll).label
     end
 
-    local headline = {
-        Line(string.format("**%s**", verdict)),
-    }
-
-    if dmhub.isDM then
-        headline[#headline + 1] = gui.Button{
-            classes = { "sizeXxs" },
-            icon = "icons/standard/Icon_App_Undo.png",
-            halign = "right",
-            valign = "center",
-            floating = true,
-            hover = gui.Tooltip("Undo this roll"),
-            click = function()
-                MTGRun.ClearRoll(inst.id, slot)
-            end,
-        }
-    end
-
     return {
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-            children = headline,
-        },
-
+        Line(string.format("**%s**", verdict)),
         Line(table.concat(parts, " · ")),
     }
 end
@@ -462,7 +440,7 @@ local function RollerTokens(run, inst)
     local result = {}
     for _, slot in ipairs({ "lead", "assist" }) do
         local placed = inst[slot]
-        if placed ~= nil and inst[slot .. "Roll"] ~= nil then
+        if placed ~= nil and (inst[slot .. "Roll"] ~= nil or inst.granted == true) then
             local token = dmhub.GetCharacterById(placed.charid)
             local p = MTGRun.Participant(run, placed.charid)
             if token ~= nil then
@@ -507,10 +485,8 @@ function MTGChallengeCard.Create(run, inst, expanded)
         badges[#badges + 1] = Badge(MTGConstants.iconRepeatable, "Repeatable")
     end
 
-    if not open then
-        for _, token in ipairs(RollerTokens(run, inst)) do
-            badges[#badges + 1] = token
-        end
+    for _, token in ipairs(RollerTokens(run, inst)) do
+        badges[#badges + 1] = token
     end
 
     local resolving = inst.resolution ~= nil
@@ -544,6 +520,39 @@ function MTGChallengeCard.Create(run, inst, expanded)
                 end,
             }
         end
+    end
+
+    --A grant and its undo share one slot beside the status badge: the same
+    --place you hand it out is the place you take it back.
+    if dmhub.isDM and not adjudicated and inst.lead ~= nil and inst.resolution == nil
+        and not MTGRun.HasTestToUndo(run, inst) then
+        badges[#badges + 1] = gui.Button{
+            classes = { "sizeXs" },
+            icon = MTGConstants.iconGrant,
+            width = 22,
+            height = 22,
+            halign = "right",
+            valign = "center",
+            lmargin = 6,
+            hover = gui.Tooltip("Grant this to the Lead, no roll"),
+            click = function()
+                MTGRun.Grant(inst.id)
+            end,
+        }
+    elseif dmhub.isDM and MTGRun.HasTestToUndo(run, inst) then
+        badges[#badges + 1] = gui.Button{
+            classes = { "sizeXs" },
+            icon = "icons/standard/Icon_App_Undo.png",
+            width = 22,
+            height = 22,
+            halign = "right",
+            valign = "center",
+            lmargin = 6,
+            hover = gui.Tooltip("Undo this test"),
+            click = function()
+                MTGRun.UndoTest(inst.id)
+            end,
+        }
     end
 
     badges[#badges + 1] = Badge(status.icon, status.tooltip, status.tone)

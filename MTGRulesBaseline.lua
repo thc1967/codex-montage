@@ -101,6 +101,12 @@ MTGRules.Register{
         }
     end,
 
+    --- What the Director hands out when they grant a success without a roll.
+    --- @return table {id, label, tone}
+    GrantedOutcome = function()
+        return { id = "success", label = "Success", tone = "success" }
+    end,
+
     --- Every Baseline roll decides itself.
     --- @param run MTGRun
     --- @param ch MTGChallengeDef

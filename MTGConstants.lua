@@ -12,6 +12,7 @@ MTGConstants.panelName = "Montage"
 
 MTGConstants.iconRepeatable = "phosphor/repeat-bold.png"
 MTGConstants.iconRoll = "ui-icons/dsdice/djordice-d10.png"
+MTGConstants.iconGrant = "phosphor/check-fat-duotone.png"
 MTGConstants.iconVictory = "drawsteel/HeroicResources/T_UI_ICON_FLAT_HR_VICTORY.png"
 MTGConstants.iconPending = "phosphor/question-light.png"
 MTGConstants.iconSuccess = "phosphor/check-circle.png"

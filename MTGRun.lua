@@ -416,22 +416,42 @@ end
 --- @param round number
 --- @return MTGParticipant[]
 function MTGRun.TrayParticipants(run, round)
-    local spent = {}
+    --A token is one thing and can only be in one place, so it is out of the
+    --tray while it occupies a slot on a test still in play. A finished test
+    --releases it: it comes back and can take another, marked as having acted.
+    local placed = {}
     for _, inst in ipairs(run:try_get("instances", {})) do
-        local adjudicated = inst.adjudicatedInRound
-        if adjudicated == nil or adjudicated == round then
-            if inst.lead ~= nil then spent[inst.lead.charid] = true end
-            if inst.assist ~= nil then spent[inst.assist.charid] = true end
+        if inst.adjudicatedInRound == nil then
+            if inst.lead ~= nil then placed[inst.lead.charid] = true end
+            if inst.assist ~= nil then placed[inst.assist.charid] = true end
         end
     end
 
     local result = {}
     for _, p in ipairs(MTGRun.ActiveParticipants(run)) do
-        if not spent[p.charid] then
+        if not placed[p.charid] then
             result[#result + 1] = p
         end
     end
     return result
+end
+
+--- Has this Participant already taken a test that resolved this round? Purely
+--- a readout: it never blocks them from taking another.
+--- @param run MTGRun
+--- @param charid string
+--- @return boolean
+function MTGRun.HasActedThisRound(run, charid)
+    local round = run.round or 1
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if inst.adjudicatedInRound == round then
+            if (inst.lead ~= nil and inst.lead.charid == charid)
+                or (inst.assist ~= nil and inst.assist.charid == charid) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 --- Turn the round and open whatever becomes available.
@@ -849,19 +869,57 @@ local function Unadjudicate(run, inst)
     inst.adjudicatedInRound = nil
 end
 
---- Take a roll back off a row. An adjudicated row is unwound first, so one
---- press puts everything the test touched back the way it was.
+--- Hand a Challenge to the Lead without a roll. The skills-spent bookkeeping
+--- in Adjudicate only fires on a slot that actually chose a skill, so a grant
+--- taken with no skill selected costs nobody anything.
 --- @param instanceId string
---- @param slot string
-function MTGRun.ClearRoll(instanceId, slot)
-    MTGRun.Mutate("Undo montage roll", function(run)
+function MTGRun.Grant(instanceId)
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local inst = MTGRun.Instance(run, instanceId)
+    if inst == nil or inst.adjudicatedInRound ~= nil or inst.lead == nil then
+        return
+    end
+
+    MTGRun.Adjudicate(instanceId,
+        MTGRules.GetOrDefault(run.moduleId).GrantedOutcome())
+
+    MTGRun.Mutate("Grant montage success", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i ~= nil then
+            i.granted = true
+        end
+    end)
+end
+
+--- Unwind a whole test -- granted or rolled, both slots -- back to the state
+--- the row was in before anyone was asked for anything. The staged heroes and
+--- their picks stay put; only what the test produced goes.
+--- @param instanceId string
+function MTGRun.UndoTest(instanceId)
+    MTGRun.Mutate("Undo montage test", function(run)
         local inst = MTGRun.Instance(run, instanceId)
         if inst == nil then
             return
         end
         Unadjudicate(run, inst)
-        inst[slot .. "Roll"] = nil
+        inst.granted = nil
+        inst.leadRoll = nil
+        inst.assistRoll = nil
     end)
+end
+
+--- @param run MTGRun
+--- @param inst table
+--- @return boolean whether this row has anything to take back
+function MTGRun.HasTestToUndo(run, inst)
+    return inst.adjudicatedInRound ~= nil
+        or inst.granted == true
+        or inst.leadRoll ~= nil
+        or inst.assistRoll ~= nil
 end
 
 --- May this client move this participant's token? The Director may move
@@ -894,17 +952,9 @@ end
 --- @param slot string "lead" or "assist"
 --- @return MTGParticipant[]
 function MTGRun.StageOptions(run, inst, slot)
-    local spent = {}
-    for _, other in ipairs(run:try_get("instances", {})) do
-        if other.adjudicatedInRound == (run.round or 1) then
-            if other.lead ~= nil then spent[other.lead.charid] = true end
-            if other.assist ~= nil then spent[other.assist.charid] = true end
-        end
-    end
-
     local result = {}
     for _, p in ipairs(MTGRun.ActiveParticipants(run)) do
-        if not spent[p.charid] and MTGRun.CanStage(run, inst, slot, p.charid) then
+        if MTGRun.CanStage(run, inst, slot, p.charid) then
             result[#result + 1] = p
         end
     end

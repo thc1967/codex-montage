@@ -186,15 +186,18 @@ function MTGWidgets.RecapCard(row, lines)
     }
 end
 
---- The round's free participant tokens. One token per participant per round:
---- it is here, or in a Lead slot, or in an Assist slot.
+--- The round's free participant tokens: everyone not currently standing on a
+--- test still in play. Anyone who already took a test this round is here too,
+--- greyed, and can take another.
+--- @param run MTGRun
 --- @param participants MTGParticipant[]
 --- @param onReturn fun(charid: string)
 --- @return Panel
-function MTGWidgets.Tray(participants, onReturn)
+function MTGWidgets.Tray(run, participants, onReturn)
     local children = {}
     for _, p in ipairs(participants) do
-        local token = MTGWidgets.ParticipantToken(p, true)
+        local token = MTGWidgets.ParticipantToken(p, true, nil,
+            MTGRun.HasActedThisRound(run, p.charid))
         if token ~= nil then
             children[#children + 1] = token
         end

@@ -225,7 +225,7 @@ function MTGRunPanel.Create(opts)
             boardPanel.children = sections
 
             trayPanel.children = {
-                MTGWidgets.Tray(MTGRun.TrayParticipants(run, run.round or 1), function(charid)
+                MTGWidgets.Tray(run, MTGRun.TrayParticipants(run, run.round or 1), function(charid)
                     MTGRun.UnstageParticipant(charid)
                 end),
             }
