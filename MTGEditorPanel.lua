@@ -16,6 +16,70 @@ local FIELD_WIDTH = "30%"
 --- @param width string
 --- @param control Panel
 --- @return Panel
+--- A "- [n] +" stepper for how many further attempts a Challenge allows.
+--- @param defid string
+--- @param chid string
+--- @param ch MTGChallengeDef
+--- @return Panel
+local function RepeatStepper(defid, chid, ch)
+    local input
+
+    local function Commit(value)
+        local n = math.max(0, math.min(MTGConstants.repeatMax, math.floor(value or 0)))
+        input.text = tostring(n)
+        MTGDefinition.SetChallengeField(defid, chid, "repeatable", n)
+    end
+
+    input = gui.Input{
+        classes = { "formStacked", "sizeXs" },
+        width = "40%",
+        height = 22,
+        halign = "left",
+        valign = "center",
+        numeric = true,
+        characterLimit = 2,
+        textAlignment = "center",
+        text = tostring(ch:RepeatLimit()),
+        change = function(element)
+            Commit(tonumber(element.text) or 0)
+        end,
+    }
+
+    return gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        halign = "left",
+        valign = "center",
+
+        gui.Button{
+            classes = { "sizeXxs" },
+            width = 22,
+            height = 22,
+            text = "-",
+            halign = "left",
+            valign = "center",
+            press = function()
+                Commit((tonumber(input.text) or 0) - 1)
+            end,
+        },
+
+        input,
+
+        gui.Button{
+            classes = { "sizeXxs" },
+            width = 22,
+            height = 22,
+            text = "+",
+            halign = "left",
+            valign = "center",
+            press = function()
+                Commit((tonumber(input.text) or 0) + 1)
+            end,
+        },
+    }
+end
+
 local function FormRow(labelText, width, control)
     return gui.Panel{
         classes = { "formStackedRow" },
@@ -201,14 +265,7 @@ local function ChallengeCard(defid, def, ch, index, count)
                 end,
             }),
 
-            FormRow("Repeatable", "16%", gui.Check{
-                classes = { "formStacked", "sizeS" },
-                text = "",
-                value = ch.repeatable == true,
-                change = function(element)
-                    MTGDefinition.SetChallengeField(defid, chid, "repeatable", element.value)
-                end,
-            }),
+            FormRow("Repeats", "16%", RepeatStepper(defid, chid, ch)),
 
             gui.Panel{
                 width = "14%",

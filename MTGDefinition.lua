@@ -7,15 +7,29 @@ local mod = dmhub.GetModLoading()
 --- @field description string
 --- @field allowedCharacteristics string[] ordered; ties in the derived characteristic resolve to this order
 --- @field allowedSkills string[]
---- @field repeatable boolean
+--- @field repeatable number how many times it may be attempted AGAIN
 --- @field availableFromRound number
 --- @field moduleFields table keyed by rules module id
 MTGChallengeDef = RegisterGameType("MTGChallengeDef")
 
 MTGChallengeDef.name = "New Challenge"
 MTGChallengeDef.description = ""
-MTGChallengeDef.repeatable = false
+MTGChallengeDef.repeatable = 0
 MTGChallengeDef.availableFromRound = 1
+
+--- How many further attempts this Challenge allows. Stored as a count now;
+--- a legacy boolean true meant "always", which reads as the cap.
+--- @return number
+function MTGChallengeDef:RepeatLimit()
+    local value = self:try_get("repeatable", 0)
+    if value == true then
+        return MTGConstants.repeatMax
+    end
+    if type(value) ~= "number" then
+        return 0
+    end
+    return math.max(0, math.min(MTGConstants.repeatMax, math.floor(value)))
+end
 
 --- @param args nil|table
 --- @return MTGChallengeDef
@@ -572,7 +586,7 @@ function MTGDefinition.BuildImportTemplate(moduleId)
     Add(string.format('      "name": %s,', JsonString("First Challenge")))
     Add(string.format('      "description": %s,', JsonString("")))
     Add('      "availableFromRound": 1,')
-    Add('      "repeatable": false,')
+    Add('      "repeatable": 0,')
     Add(string.format('      "characteristics": [%s],', JsonString("Might")))
     Add('      "skills": [],')
     local chFields = rules.ChallengeFields()
@@ -661,7 +675,9 @@ local function ImportChallenge(entry, rules, moduleId, messages)
         name = entry.name,
         description = cond(type(entry.description) == "string", entry.description, ""),
         availableFromRound = math.max(1, math.floor(tonumber(entry.availableFromRound) or 1)),
-        repeatable = entry.repeatable == true,
+        repeatable = cond(entry.repeatable == true, MTGConstants.repeatMax,
+            math.max(0, math.min(MTGConstants.repeatMax,
+                math.floor(tonumber(entry.repeatable) or 0)))),
     }
 
     ch.allowedCharacteristics = ResolveIds(entry.characteristics,

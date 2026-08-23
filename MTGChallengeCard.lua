@@ -481,8 +481,11 @@ function MTGChallengeCard.Create(run, inst, expanded)
     end
 
     local badges = {}
-    if ch.repeatable == true and not adjudicated then
-        badges[#badges + 1] = Badge(MTGConstants.iconRepeatable, "Repeatable")
+    local attemptsLeft = MTGRun.AttemptsLeft(run, ch)
+    if not adjudicated and ch:RepeatLimit() > 0 and attemptsLeft > 1 then
+        badges[#badges + 1] = Badge(MTGConstants.iconRepeatable,
+            string.format("%d more attempt%s after this one",
+                attemptsLeft - 1, cond(attemptsLeft - 1 == 1, "", "s")))
     end
 
     for _, token in ipairs(RollerTokens(run, inst)) do

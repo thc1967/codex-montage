@@ -436,6 +436,30 @@ function MTGRun.TrayParticipants(run, round)
     return result
 end
 
+--- How many times this Challenge has been carried through to an outcome.
+--- Counted from the rows rather than tallied, so an undo hands the attempt
+--- straight back.
+--- @param run MTGRun
+--- @param chid string
+--- @return number
+function MTGRun.AttemptsMade(run, chid)
+    local count = 0
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if inst.challengeId == chid and inst.adjudicatedInRound ~= nil then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+--- Attempts still available, the first one included.
+--- @param run MTGRun
+--- @param ch MTGChallengeDef
+--- @return number
+function MTGRun.AttemptsLeft(run, ch)
+    return math.max(0, (ch:RepeatLimit() + 1) - MTGRun.AttemptsMade(run, ch.id))
+end
+
 --- Has this Participant already taken a test that resolved this round? Purely
 --- a readout: it never blocks them from taking another.
 --- @param run MTGRun

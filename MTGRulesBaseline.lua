@@ -134,7 +134,7 @@ MTGRules.Register{
     --- @param inst table
     --- @return string a state id
     PostResolutionState = function(run, ch, inst)
-        if ch.repeatable == true then
+        if MTGRun.AttemptsLeft(run, ch) > 0 then
             return MTGConstants.stateOpen
         end
         return MTGConstants.stateClosed

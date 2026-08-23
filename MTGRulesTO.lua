@@ -151,7 +151,13 @@ MTGRules.Register{
     --- @return string a state id
     PostResolutionState = function(run, ch, inst)
         local outcome = inst.outcome or {}
-        if outcome.tone ~= "success" or ch.repeatable == true then
+        --A failed Threat comes straight back, uncapped: that is the module's
+        --whole personality. The repeat count only governs coming back after
+        --a success.
+        if outcome.tone ~= "success" then
+            return MTGConstants.stateOpen
+        end
+        if MTGRun.AttemptsLeft(run, ch) > 0 then
             return MTGConstants.stateOpen
         end
         return MTGConstants.stateClosed

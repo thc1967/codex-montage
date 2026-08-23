@@ -14,7 +14,7 @@ MTGConstants.iconRepeatable = "phosphor/repeat-bold.png"
 MTGConstants.iconRoll = "ui-icons/dsdice/djordice-d10.png"
 MTGConstants.iconGrant = "phosphor/check-fat-duotone.png"
 MTGConstants.iconVictory = "drawsteel/HeroicResources/T_UI_ICON_FLAT_HR_VICTORY.png"
-MTGConstants.iconPending = "phosphor/question-light.png"
+MTGConstants.iconPending = "phosphor/circle-duotone.png" --"phosphor/circle-duotone.png"
 MTGConstants.iconSuccess = "phosphor/check-circle.png"
 MTGConstants.iconFailure = "phosphor/x-circle.png"
 
@@ -29,6 +29,11 @@ MTGConstants.rollCheckId = "mtg_test"
 --- modifier matcher admits only "all" or an exact match against a closed
 --- vocabulary, and a miss drops every Tests-scoped modifier without raising.
 MTGConstants.modifierRollType = "test_power_roll"
+
+--- The most repeats a Challenge can carry. A montage runs a couple of rounds,
+--- so this doubles as "effectively unlimited" for legacy data that stored
+--- repeatable as a plain true.
+MTGConstants.repeatMax = 99
 
 MTGConstants.moduleBaseline = "baseline"
 MTGConstants.moduleTO = "to"
