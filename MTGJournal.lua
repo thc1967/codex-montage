@@ -11,8 +11,13 @@ local FOLDER_NAME = "Montage Results"
 --- literally, so the columns above the portraits carry a zero-width space.
 local BLANK_HEADER = "\226\128\139"
 
---- uiscale is the only size control a RichImage has; maxWidth stays 100%.
-local PORTRAIT_SCALE = 0.30
+--- A pixel cap rather than a percentage. RichImage sizes itself from its
+--- texture, and the display fires refreshTag at a tag panel BEFORE parenting
+--- it, so on a freshly opened document a percentage maxWidth has no width to
+--- resolve against and the portrait never paints. An already-open document
+--- re-renders against a pooled, still-parented panel, which is why flipping the
+--- stylesheet looked like a fix and why closing and reopening undid it.
+local PORTRAIT_WIDTH = 48
 
 --- A cell's text, with the characters that would break the row taken out.
 --- @param str string|nil
@@ -119,8 +124,8 @@ local function BuildContent(run)
         annotations[key] = RichImage.new{
             image = token.portrait,
             halign = "left",
-            maxWidth = "100%",
-            uiscale = PORTRAIT_SCALE,
+            maxWidth = PORTRAIT_WIDTH,
+            uiscale = 1,
         }
         return string.format("[[%s]]", key)
     end
