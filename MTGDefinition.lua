@@ -779,3 +779,4 @@ function MTGDefinition.ImportFromJson(text)
 
     return { ok = true, defid = def:GetID(), name = name, messages = messages }
 end
+

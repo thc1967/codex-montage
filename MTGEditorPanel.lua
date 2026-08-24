@@ -882,3 +882,4 @@ function MTGEditorPanel.Create()
 
     return resultPanel
 end
+

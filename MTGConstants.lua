@@ -59,3 +59,4 @@ MTGConstants.stateClosed = "closed"
 MTGConstants.statusSetup = "setup"
 MTGConstants.statusRunning = "running"
 MTGConstants.statusEnded = "ended"
+
