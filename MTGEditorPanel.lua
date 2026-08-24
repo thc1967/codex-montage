@@ -74,17 +74,30 @@ local function Stepper(opts)
     }
 end
 
-local function FormRow(labelText, width, control)
+local function FormRow(labelText, width, control, hint)
+    local children = {
+        gui.Label{
+            classes = { "formStacked", "sizeS" },
+            text = labelText,
+        },
+        control,
+    }
+
+    if hint ~= nil then
+        children[#children + 1] = gui.Label{
+            classes = { "sizeXxs", "fgMuted" },
+            italics = true,
+            width = "auto",
+            height = "auto",
+            halign = "left",
+            text = hint,
+        }
+    end
+
     return gui.Panel{
         classes = { "formStackedRow" },
         width = width,
-        children = {
-            gui.Label{
-                classes = { "formStacked", "sizeS" },
-                text = labelText,
-            },
-            control,
-        },
+        children = children,
     }
 end
 
@@ -114,14 +127,79 @@ local function SettingField(defid, moduleId, field, value)
     })
 end
 
---- A module-contributed field on one Challenge.
+--- Where a challenge form reads and writes. The library editor goes through
+--- MTGDefinition; a run-time draft goes to a table nobody else can see.
+--- @class MTGChallengeStore
+--- @field Read fun(): MTGChallengeDef|nil the live object, for order-preserving merges
+--- @field SetField fun(key: string, value: any)
+--- @field SetModuleField fun(fieldId: string, value: any)
+--- @field SetCharacteristics fun(list: string[])
+--- @field SetSkills fun(list: string[])
+
 --- @param defid string
+--- @param chid string
+--- @param moduleId string
+--- @return MTGChallengeStore
+local function DefinitionStore(defid, chid, moduleId)
+    return {
+        Read = function()
+            local def = MTGDefinition.GetByID(defid)
+            if def == nil then
+                return nil
+            end
+            return (MTGDefinition.FindChallenge(def, chid))
+        end,
+        SetField = function(key, value)
+            MTGDefinition.SetChallengeField(defid, chid, key, value)
+        end,
+        SetModuleField = function(fieldId, value)
+            MTGDefinition.SetChallengeModuleField(defid, chid, moduleId, fieldId, value)
+        end,
+        SetCharacteristics = function(list)
+            MTGDefinition.SetChallengeCharacteristics(defid, chid, list)
+        end,
+        SetSkills = function(list)
+            MTGDefinition.SetChallengeSkills(defid, chid, list)
+        end,
+    }
+end
+
+--- @param draft MTGChallengeDef
+--- @param moduleId string
+--- @param onChanged fun()
+--- @return MTGChallengeStore
+local function DraftStore(draft, moduleId, onChanged)
+    return {
+        Read = function()
+            return draft
+        end,
+        SetField = function(key, value)
+            draft[key] = value
+            onChanged()
+        end,
+        SetModuleField = function(fieldId, value)
+            draft:FieldsFor(moduleId)[fieldId] = value
+            onChanged()
+        end,
+        SetCharacteristics = function(list)
+            draft.allowedCharacteristics = list
+            onChanged()
+        end,
+        SetSkills = function(list)
+            draft.allowedSkills = list
+            onChanged()
+        end,
+    }
+end
+
+--- A module-contributed field on one Challenge.
+--- @param store MTGChallengeStore
 --- @param ch MTGChallengeDef
 --- @param moduleId string
 --- @param field table a ChallengeFields() entry
+--- @param hint string|nil
 --- @return Panel
-local function ChallengeModuleField(defid, ch, moduleId, field)
-    local chid = ch.id
+local function ChallengeModuleField(store, ch, moduleId, field, hint)
     local value = ch:FieldValue(moduleId, field)
 
     if field.type == "choice" then
@@ -130,9 +208,9 @@ local function ChallengeModuleField(defid, ch, moduleId, field)
             options = field.options,
             idChosen = value,
             change = function(element)
-                MTGDefinition.SetChallengeModuleField(defid, chid, moduleId, field.id, element.idChosen)
+                store.SetModuleField(field.id, element.idChosen)
             end,
-        })
+        }, hint)
     end
 
     return FormRow(field.text, "60%", gui.Input{
@@ -140,18 +218,18 @@ local function ChallengeModuleField(defid, ch, moduleId, field)
         text = tostring(value or ""),
         characterLimit = 200,
         change = function(element)
-            MTGDefinition.SetChallengeModuleField(defid, chid, moduleId, field.id, element.text or "")
+            store.SetModuleField(field.id, element.text or "")
         end,
     })
 end
 
 --- Allowed characteristics. Ordered: a hero who ties across two of these
 --- takes whichever the Director listed first, so selection order is data.
---- @param defid string
+--- @param store MTGChallengeStore
 --- @param ch MTGChallengeDef
+--- @param hint string|nil
 --- @return Panel
-local function CharacteristicsPicker(defid, ch)
-    local chid = ch.id
+local function CharacteristicsPicker(store, ch, hint)
     local options = MTGUtils.CharacteristicOptions()
     local chosen = ch:try_get("allowedCharacteristics", {})
 
@@ -162,26 +240,21 @@ local function CharacteristicsPicker(defid, ch)
             options = options,
             value = MTGUtils.ToSet(chosen),
             change = function(element)
-                local current = MTGDefinition.GetByID(defid)
-                if current == nil then
-                    return
-                end
                 local existing = {}
-                local c = MTGDefinition.FindChallenge(current, chid)
-                if c ~= nil then
-                    existing = c:try_get("allowedCharacteristics", {})
+                local current = store.Read()
+                if current ~= nil then
+                    existing = current:try_get("allowedCharacteristics", {})
                 end
-                MTGDefinition.SetChallengeCharacteristics(defid, chid,
+                store.SetCharacteristics(
                     MTGUtils.MergeOrdered(element.value, existing, options))
             end,
-        })
+        }, hint)
 end
 
---- @param defid string
+--- @param store MTGChallengeStore
 --- @param ch MTGChallengeDef
 --- @return Panel
-local function SkillsPicker(defid, ch)
-    local chid = ch.id
+local function SkillsPicker(store, ch)
     local options = MTGUtils.SkillOptions()
     local chosen = ch:try_get("allowedSkills", {})
 
@@ -197,7 +270,7 @@ local function SkillsPicker(defid, ch)
                         list[#list + 1] = option.id
                     end
                 end
-                MTGDefinition.SetChallengeSkills(defid, chid, list)
+                store.SetSkills(list)
             end,
         })
 end
@@ -227,6 +300,229 @@ local function SummaryText(ch, moduleId)
     return table.concat(parts, ", ")
 end
 
+--- The field rows of a Challenge, shared by the library editor and the
+--- run-time draft. Everything it writes goes through the store, so the caller
+--- decides whether that lands in a saved montage or a private draft.
+--- @param ch MTGChallengeDef
+--- @param moduleId string
+--- @param store MTGChallengeStore
+--- @param opts nil|{showRequired: boolean}
+--- @return Panel[]
+function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
+    opts = opts or {}
+
+    local required = nil
+    if opts.showRequired == true then
+        required = "Required."
+    end
+
+    --Only a choice field can be required: a module's free text, like T&O's
+    --outcome, is the Director's business.
+    local moduleFields = {}
+    for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
+        moduleFields[#moduleFields + 1] = ChallengeModuleField(store, ch, moduleId, field,
+            cond(field.type == "choice", required))
+    end
+
+    return {
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            FormRow("Name", "42%", gui.Input{
+                classes = { "formStacked", "sizeS" },
+                text = ch.name or "",
+                characterLimit = 80,
+                change = function(element)
+                    local newName = string.trim(element.text or "")
+                    if newName == "" then
+                        element.text = ch.name or ""
+                        return
+                    end
+                    store.SetField("name", newName)
+                end,
+            }, required),
+
+            FormRow("From Round", "16%", Stepper{
+                value = ch.availableFromRound or 1,
+                min = 1,
+                max = MTGConstants.roundMax,
+                commit = function(n)
+                    store.SetField("availableFromRound", n)
+                end,
+            }, required),
+
+            FormRow("Repeats", "16%", Stepper{
+                value = ch:RepeatLimit(),
+                min = 0,
+                max = MTGConstants.repeatMax,
+                commit = function(n)
+                    store.SetField("repeatable", n)
+                end,
+            }),
+        },
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            FormRow("Description", "92%", gui.Input{
+                classes = { "formStacked", "sizeS" },
+                text = ch.description or "",
+                characterLimit = 300,
+                change = function(element)
+                    store.SetField("description", element.text or "")
+                end,
+            }),
+        },
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            CharacteristicsPicker(store, ch, required),
+            SkillsPicker(store, ch),
+        },
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+            children = moduleFields,
+        },
+    }
+end
+
+--- Whether a run-time draft carries what a Challenge needs to be rollable. A
+--- lower bar than IsChallengeComplete: description and skills are the
+--- Director's business, but with no characteristic DeriveCharacteristic has
+--- nothing to walk and the lead rolls against nothing.
+--- @param draft MTGChallengeDef
+--- @param moduleId string
+--- @return boolean
+local function DraftReady(draft, moduleId)
+    if string.trim(draft.name or "") == "" then
+        return false
+    end
+    if (tonumber(draft.availableFromRound) or 0) < 1 then
+        return false
+    end
+    if #draft:try_get("allowedCharacteristics", {}) < 1 then
+        return false
+    end
+
+    for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
+        if field.type == "choice" then
+            local value = draft:FieldValue(moduleId, field)
+            if value == nil or string.trim(tostring(value)) == "" then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+--- A Challenge authored while the montage is running. It reaches the document
+--- only on Present, so discarding costs nothing and the table never sees a
+--- half-built row.
+--- @param draft MTGChallengeDef
+--- @param moduleId string
+--- @param onPresent fun(draft: MTGChallengeDef)
+--- @param onDiscard fun()
+--- @return Panel
+function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
+    local presentButton
+
+    presentButton = gui.Button{
+        classes = { "sizeXs", cond(not DraftReady(draft, moduleId), "disabled") },
+        icon = MTGConstants.iconPresent,
+        width = 22,
+        height = 22,
+        halign = "right",
+        valign = "center",
+        hmargin = 2,
+        hover = gui.Tooltip("Present this challenge to the table"),
+        click = function(element)
+            if element:HasClass("disabled") then
+                return
+            end
+            onPresent(draft)
+        end,
+    }
+
+    --The form is left standing and only the button is retoned: rebuilding it
+    --on every edit would take the caret out of whatever field is being typed.
+    local function SyncPresent()
+        if presentButton ~= nil and presentButton.valid then
+            presentButton:SetClass("disabled", not DraftReady(draft, moduleId))
+        end
+    end
+
+    return gui.Panel{
+        classes = { "bordered" },
+        width = "96%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        pad = 8,
+        vmargin = 4,
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            gui.Label{
+                classes = { "sizeS", "bold" },
+                width = "auto",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                text = "New Challenge",
+            },
+
+            gui.Panel{
+                width = "20%",
+                height = "auto",
+                flow = "horizontal",
+                halign = "right",
+                valign = "top",
+
+                presentButton,
+
+                gui.Button{
+                    classes = { "deleteButton", "sizeXs" },
+                    halign = "right",
+                    valign = "top",
+                    hmargin = 2,
+                    hover = gui.Tooltip("Discard this challenge"),
+                    click = function()
+                        onDiscard()
+                    end,
+                },
+            },
+        },
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            valign = "top",
+            children = MTGEditorPanel.ChallengeForm(draft, moduleId,
+                DraftStore(draft, moduleId, SyncPresent), { showRequired = true }),
+        },
+    }
+end
+
 --- One authored Challenge.
 --- @param defid string
 --- @param def MTGDefinition
@@ -248,90 +544,14 @@ local function ChallengeCard(defid, def, ch, index, expanded)
         expanded[chid] = open
     end
 
-    local moduleFields = {}
-    for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
-        moduleFields[#moduleFields + 1] = ChallengeModuleField(defid, ch, moduleId, field)
-    end
-
     local body = gui.Panel{
         classes = { cond(not open, "collapsed") },
         width = "100%",
         height = "auto",
         flow = "vertical",
         valign = "top",
-
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            FormRow("Name", "42%", gui.Input{
-                classes = { "formStacked", "sizeS" },
-                text = ch.name or "",
-                characterLimit = 80,
-                change = function(element)
-                    local newName = string.trim(element.text or "")
-                    if newName == "" then
-                        element.text = ch.name or ""
-                        return
-                    end
-                    MTGDefinition.SetChallengeField(defid, chid, "name", newName)
-                end,
-            }),
-
-            FormRow("From Round", "16%", Stepper{
-                value = ch.availableFromRound or 1,
-                min = 1,
-                max = MTGConstants.roundMax,
-                commit = function(n)
-                    MTGDefinition.SetChallengeField(defid, chid, "availableFromRound", n)
-                end,
-            }),
-
-            FormRow("Repeats", "16%", Stepper{
-                value = ch:RepeatLimit(),
-                min = 0,
-                max = MTGConstants.repeatMax,
-                commit = function(n)
-                    MTGDefinition.SetChallengeField(defid, chid, "repeatable", n)
-                end,
-            }),
-        },
-
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            FormRow("Description", "92%", gui.Input{
-                classes = { "formStacked", "sizeS" },
-                text = ch.description or "",
-                characterLimit = 300,
-                change = function(element)
-                    MTGDefinition.SetChallengeField(defid, chid, "description", element.text or "")
-                end,
-            }),
-        },
-
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            CharacteristicsPicker(defid, ch),
-            SkillsPicker(defid, ch),
-        },
-
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-            children = moduleFields,
-        },
+        children = MTGEditorPanel.ChallengeForm(ch, moduleId,
+            DefinitionStore(defid, chid, moduleId)),
     }
 
     local summaryLabel = gui.Label{

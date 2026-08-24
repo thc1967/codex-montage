@@ -405,6 +405,39 @@ function MTGRun.SeedRound(run, round)
     end
 end
 
+--- Put a Challenge authored mid-run onto the board, and keep it: presenting it
+--- to the table is what earns it a place in the saved montage as well.
+--- @param ch MTGChallengeDef
+function MTGRun.AddChallengeAtRuntime(ch)
+    local defid = nil
+
+    MTGRun.Mutate("Add challenge", function(run)
+        defid = run.sourceId
+        if run:try_get("challenges") == nil then
+            run.challenges = {}
+        end
+        run.challenges[#run.challenges + 1] = ch
+
+        --SeedRound fires only on exact round equality and has already run for
+        --the round in play, so a row for this one has to be made here. A
+        --future round is left to SeedRound.
+        local round = run.round or 1
+        if (ch.availableFromRound or 1) == round then
+            if run:try_get("instances") == nil then
+                run.instances = {}
+            end
+            run.instances[#run.instances + 1] = NewInstance(ch.id, round)
+        end
+    end)
+
+    --A copy, so the run and the montage are not sharing one table across two
+    --documents. The montage may since have been deleted; AppendChallenge
+    --shrugs that off.
+    if defid ~= nil then
+        MTGDefinition.AppendChallenge(defid, DeepCopy(ch))
+    end
+end
+
 --- @param run MTGRun
 --- @param instanceId string
 --- @return table|nil

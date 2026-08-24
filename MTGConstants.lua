@@ -20,6 +20,10 @@ MTGConstants.iconSuccess = "phosphor/check-circle.png"
 --- Shown in the editor when a Challenge has every field it needs. Distinct in
 --- meaning from iconSuccess even though it shares the asset.
 MTGConstants.iconConfigured = "phosphor/check-circle.png"
+
+--- Hand a run-time Challenge to the table. The journal's share control.
+MTGConstants.iconPresent = "icons/icon_app/icon_app_34.png"
+
 MTGConstants.iconFailure = "phosphor/x-circle.png"
 
 --- Seconds the celebration stays reachable, counted from when it goes out.

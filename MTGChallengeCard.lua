@@ -463,8 +463,9 @@ end
 --- @param inst table
 --- @param expanded table<string, boolean> this client's overrides, by instance
 --- @param director boolean
+--- @param forceOpen boolean|nil a row just presented mid-run, open on arrival
 --- @return Panel
-function MTGChallengeCard.Create(run, inst, expanded, director)
+function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
     local ch = MTGRun.ChallengeFor(run, inst)
     if ch == nil then
         return gui.Panel{ width = 0, height = 0 }
@@ -475,11 +476,19 @@ function MTGChallengeCard.Create(run, inst, expanded, director)
 
     --Players open rows deliberately. The Director wants the live ones already
     --open -- a T&O tier 2 has not settled, so its buttons stay reachable --
-    --and only the settled ones folded away.
+    --and only the settled ones folded away. A row presented mid-run arrives
+    --open for everyone, and folds itself away like any other once it settles:
+    --forcing it through the default rather than through the memo is what keeps
+    --that true.
+    --
+    --The memo is keyed by phase. Opening a row to drop a token in is a decision
+    --about working the test, not a standing wish to keep it open, so settling
+    --clears it. Toggles after that are remembered under the settled key.
     expanded = expanded or {}
-    local open = expanded[inst.id]
+    local foldKey = inst.id .. cond(adjudicated, "/done", "")
+    local open = expanded[foldKey]
     if open == nil then
-        open = director and not adjudicated
+        open = (director or forceOpen == true) and not adjudicated
     end
 
     local badges = {}
@@ -584,7 +593,7 @@ function MTGChallengeCard.Create(run, inst, expanded, director)
     arrowArgs.click = function(element)
         local nowOpen = not element:HasClass("expanded")
         element:SetClass("expanded", nowOpen)
-        expanded[inst.id] = nowOpen
+        expanded[foldKey] = nowOpen
         body:SetClass("collapsed", not nowOpen)
     end
 

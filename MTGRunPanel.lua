@@ -15,6 +15,18 @@ function MTGRunPanel.Create(opts)
     local m_expanded = {}
     local m_cardExpanded = {}
 
+    --Challenges this board has already drawn. Seeded silently on the first
+    --build, so a board opened later sorts normally; anything that turns up
+    --after that is something the Director has just presented, and it floats to
+    --the top of its round until this client closes the board.
+    local m_seenChallenges = nil
+    local m_pinned = {}
+
+    --The run-time challenge being authored. Director side only, and held as
+    --data rather than as a panel so a document refresh mid-edit cannot strand
+    --it in a body that is about to be replaced.
+    local m_draft = nil
+
     local titleLabel = gui.Label{
         classes = { "tableLabel" },
         width = "70%",
@@ -141,6 +153,27 @@ function MTGRunPanel.Create(opts)
             local rules = MTGRules.GetOrDefault(run.moduleId)
             local sections = {}
 
+            --Keyed by challenge rather than by instance: a round advance seeds
+            --a batch of new instances, and every one of them would otherwise
+            --look like something the Director had just added.
+            if m_seenChallenges == nil then
+                m_seenChallenges = {}
+                for _, ch in ipairs(run:try_get("challenges", {})) do
+                    m_seenChallenges[ch.id] = true
+                end
+            else
+                for _, ch in ipairs(run:try_get("challenges", {})) do
+                    if not m_seenChallenges[ch.id] then
+                        m_seenChallenges[ch.id] = true
+                        --One authored for a later round is just another
+                        --challenge when its round comes around.
+                        if (ch.availableFromRound or 1) == (run.round or 1) then
+                            m_pinned[ch.id] = true
+                        end
+                    end
+                end
+            end
+
             for round = 1, run.round or 1 do
                 local instances = MTGRun.InstancesForRound(run, round)
 
@@ -160,6 +193,19 @@ function MTGRunPanel.Create(opts)
                     end
                 end
 
+                local floated = {}
+                for _, inst in ipairs(ordered) do
+                    if m_pinned[inst.challengeId] then
+                        floated[#floated + 1] = inst
+                    end
+                end
+                for _, inst in ipairs(ordered) do
+                    if not m_pinned[inst.challengeId] then
+                        floated[#floated + 1] = inst
+                    end
+                end
+                ordered = floated
+
                 local isCurrent = round == (run.round or 1)
                 local expanded = m_expanded[round]
                 if expanded == nil then
@@ -175,8 +221,20 @@ function MTGRunPanel.Create(opts)
                 }
 
                 local bodyChildren = {}
+                if isCurrent and m_draft ~= nil then
+                    bodyChildren[#bodyChildren + 1] = MTGEditorPanel.DraftCard(m_draft, run.moduleId,
+                        function(draft)
+                            m_draft = nil
+                            MTGRun.AddChallengeAtRuntime(draft)
+                        end,
+                        function()
+                            m_draft = nil
+                            resultPanel:FireEvent("rebuild")
+                        end)
+                end
                 for _, inst in ipairs(ordered) do
-                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded, director)
+                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded,
+                        director, m_pinned[inst.challengeId] == true)
                 end
                 body.children = bodyChildren
 
@@ -200,13 +258,7 @@ function MTGRunPanel.Create(opts)
                     m_expanded[thisRound] = nowExpanded
                     body:SetClass("collapsed", not nowExpanded)
                 end
-                sections[#sections + 1] = gui.Panel{
-                    width = "100%",
-                    height = "auto",
-                    flow = "horizontal",
-                    valign = "top",
-                    tmargin = 8,
-
+                local headerChildren = {
                     gui.ExpandoArrow(arrowArgs),
 
                     gui.Label{
@@ -218,6 +270,36 @@ function MTGRunPanel.Create(opts)
                         lmargin = 4,
                         text = string.format("Round %d", round),
                     },
+                }
+
+                if director and isCurrent then
+                    headerChildren[#headerChildren + 1] = gui.Button{
+                        classes = { "addButton", "sizeXs" },
+                        halign = "right",
+                        valign = "center",
+                        hover = gui.Tooltip("Add a challenge"),
+                        click = function()
+                            if m_draft ~= nil then
+                                return
+                            end
+                            m_draft = MTGChallengeDef.CreateNew{
+                                name = "",
+                                description = "",
+                                availableFromRound = run.round or 1,
+                                repeatable = 0,
+                            }
+                            resultPanel:FireEvent("rebuild")
+                        end,
+                    }
+                end
+
+                sections[#sections + 1] = gui.Panel{
+                    width = "100%",
+                    height = "auto",
+                    flow = "horizontal",
+                    valign = "top",
+                    tmargin = 8,
+                    children = headerChildren,
                 }
                 sections[#sections + 1] = body
             end
