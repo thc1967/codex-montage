@@ -782,7 +782,9 @@ function MTGRun.CompleteRun()
     --After the table has been told, so building the document cannot delay the
     --ending reaching the players; still before Discard, which takes the
     --instances the journal is made of.
-    MTGJournal.WriteResults(run)
+    if MTGRun.EndingWritesJournal(run) then
+        MTGJournal.WriteResults(run)
+    end
 
     MTGRun.Discard()
     LaunchablePanel.LaunchPanelByName(MTGConstants.panelName, "hide")
@@ -810,6 +812,28 @@ function MTGRun.SetEndingVictories(victories)
             ending.victories = math.max(0, math.floor(victories or 0))
         end
     end)
+end
+
+--- Whether completing this Run should leave a journal document behind. Kept on
+--- the Run rather than in the panel so the choice survives the rebuilds that
+--- happen while the ending screen is up.
+--- @param write boolean
+function MTGRun.SetEndingWriteJournal(write)
+    MTGRun.Mutate("Change montage journal", function(run)
+        local ending = run:try_get("ending")
+        if ending ~= nil then
+            ending.writeJournal = write == true
+        end
+    end)
+end
+
+--- Absent means yes: a montage that ends leaves a record unless the Director
+--- says otherwise.
+--- @param run MTGRun
+--- @return boolean
+function MTGRun.EndingWritesJournal(run)
+    local ending = run ~= nil and run:try_get("ending") or nil
+    return ending == nil or ending.writeJournal ~= false
 end
 
 --- Hand the Victories out, once. SetVictories is an absolute write, so

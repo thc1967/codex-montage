@@ -87,6 +87,21 @@ function MTGEndingPanel.Create(opts)
         end,
     }
 
+    local journalCheck = gui.Check{
+        classes = { "sizeS" },
+        width = 180,
+        height = 22,
+        halign = "left",
+        valign = "center",
+        rmargin = 8,
+        text = "Write to journal",
+        value = true,
+        hover = gui.Tooltip("Leave a record in Private Documents / Montage Results"),
+        change = function(element)
+            MTGRun.SetEndingWriteJournal(element.value)
+        end,
+    }
+
     local victoryRow = gui.Panel{
         classes = { cond(not director, "collapsed") },
         width = "100%",
@@ -98,6 +113,7 @@ function MTGEndingPanel.Create(opts)
         trophyIcon,
         victoryLabel,
         victoryInput,
+        journalCheck,
 
         gui.Button{
             classes = { "sizeS" },
@@ -175,6 +191,7 @@ function MTGEndingPanel.Create(opts)
             end
 
             victoryInput.text = tostring(ending.victories or 0)
+            journalCheck.value = MTGRun.EndingWritesJournal(run)
         end,
 
         create = function(element)
