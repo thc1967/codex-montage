@@ -277,6 +277,8 @@ function MTGRunPanel.Create(opts)
                         classes = { "addButton", "sizeXs" },
                         halign = "right",
                         valign = "center",
+                        --Clear of the board's scrollbar.
+                        rmargin = 20,
                         hover = gui.Tooltip("Add a challenge"),
                         click = function()
                             if m_draft ~= nil then

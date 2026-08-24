@@ -778,6 +778,12 @@ function MTGRun.CompleteRun()
 
     MTGRun.HideFromPlayers()
     MTGRun.AnnounceEnding(payload)
+
+    --After the table has been told, so building the document cannot delay the
+    --ending reaching the players; still before Discard, which takes the
+    --instances the journal is made of.
+    MTGJournal.WriteResults(run)
+
     MTGRun.Discard()
     LaunchablePanel.LaunchPanelByName(MTGConstants.panelName, "hide")
 

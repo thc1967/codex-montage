@@ -504,7 +504,12 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
     end
 
     local resolving = inst.resolution ~= nil
-    if dmhub.isDM and not adjudicated and inst.lead ~= nil and inst.leadRoll == nil then
+    if dmhub.isDM and not adjudicated and inst.leadRoll == nil then
+        --The button holds its place while the row is still waiting for a Lead,
+        --greyed out, so the Director can see the roll is a step away rather
+        --than wonder where the control went.
+        local ready = inst.lead ~= nil
+
         if resolving then
             badges[#badges + 1] = gui.Button{
                 classes = { "sizeXs" },
@@ -521,15 +526,20 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
             }
         else
             badges[#badges + 1] = gui.Button{
-                classes = { "sizeXs" },
+                classes = { "sizeXs", cond(not ready, "disabled") },
                 icon = MTGConstants.iconRoll,
                 width = 22,
                 height = 22,
                 halign = "right",
                 valign = "center",
                 lmargin = 6,
-                hover = gui.Tooltip("Ask the Lead's player to roll"),
-                click = function()
+                hover = gui.Tooltip(cond(ready,
+                    "Request rolls",
+                    "Put a Hero in the Lead slot first")),
+                click = function(element)
+                    if element:HasClass("disabled") then
+                        return
+                    end
                     MTGResolver.Trigger(inst.id)
                 end,
             }
