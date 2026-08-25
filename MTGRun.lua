@@ -581,6 +581,20 @@ function MTGRun.CanStage(run, inst, slot, charid)
     if inst[other] ~= nil and inst[other].charid == charid then
         return false
     end
+
+    --Stage lifts them off any row it can, but a slot they have already rolled
+    --in cannot be emptied without discarding the roll. Staging them anyway
+    --leaves them on two rows, and the second one holds them out of the tray.
+    for _, row in ipairs(run:try_get("instances", {})) do
+        if row.id ~= inst.id and row.adjudicatedInRound == nil then
+            if (row.lead ~= nil and row.lead.charid == charid and row.leadRoll ~= nil)
+                or (row.assist ~= nil and row.assist.charid == charid
+                    and row.assistRoll ~= nil) then
+                return false
+            end
+        end
+    end
+
     return true
 end
 

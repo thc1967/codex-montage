@@ -311,3 +311,78 @@ function MTGWidgets.Meter(meter)
         children = children,
     }
 end
+
+--- First of these keys the style actually carries. A style is userdata and
+--- reading a key it does not have raises, so each one is probed.
+--- @param style any
+--- @return number
+--- A curtain over whatever hosts it: dims it, swallows clicks, says why.
+--- Collapsed until the caller shows it.
+--- @param text string
+--- @param sizeClass string
+--- @param hostLevels nil|number how far up to measure; 1 (the parent) by default
+--- @param inset nil|number the host's padding, which it does not expose
+--- @return Panel
+function MTGWidgets.Overlay(text, sizeClass, hostLevels, inset)
+    hostLevels = hostLevels or 1
+    inset = inset or 0
+
+    return gui.Panel{
+        classes = { "bordered", "collapsed" },
+        floating = true,
+        width = "100%",
+        height = "100%",
+        halign = "left",
+        valign = "top",
+        flow = "none",
+        bgimage = true,
+        bgcolor = "#000000c0",
+
+        --Stops the raycast reaching the controls underneath.
+        interactable = true,
+
+        --A host sized to its own content gives a percentage nothing to resolve
+        --against, and renderedHeight reads 0 until the first layout pass.
+        thinkTime = 0.2,
+        think = function(element)
+            if element:HasClass("collapsed") then
+                return
+            end
+
+            --A rebuild can leave a stale link up the chain, and reading
+            --anything off a panel whose object has gone raises.
+            local host = element
+            for _ = 1, hostLevels do
+                if host == nil or not host.valid then
+                    return
+                end
+                host = host.parent
+            end
+            if host == nil or not host.valid then
+                return
+            end
+
+            local w = host.renderedWidth
+            local h = host.renderedHeight
+            if w ~= nil and w > 0 and h ~= nil and h > 0 then
+                --Padding counts as part of the host, so its rendered size
+                --includes it while children start inside it. Step back out.
+                element.selfStyle.width = w
+                element.selfStyle.height = h
+                element.x = -inset
+                element.y = -inset
+            end
+        end,
+
+        gui.Label{
+            classes = { sizeClass, "bold" },
+            width = "90%",
+            height = "auto",
+            halign = "center",
+            valign = "center",
+            textAlignment = "center",
+            textWrap = true,
+            text = text,
+        },
+    }
+end

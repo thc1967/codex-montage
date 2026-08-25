@@ -83,6 +83,11 @@ function MTGRunPanel.Create(opts)
         valign = "top",
     }
 
+    --Two levels: this board sits inside the player's dialog, and the curtain
+    --covers the dialog rather than just the board.
+    local reviewCurtain = MTGWidgets.Overlay(
+        "Director is reviewing the results...", "sizeXxl", 2, 16)
+
     local pauseButton = gui.Button{
         classes = { "sizeS" },
         text = "Pause",
@@ -129,11 +134,16 @@ function MTGRunPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
+        reviewCurtain,
+
         rebuild = function()
             local run = MTGRun.Active()
             if run == nil then
                 return
             end
+
+            reviewCurtain:SetClass("collapsed",
+                director or run.status ~= MTGConstants.statusEnded)
 
             titleLabel.text = run.name or "Montage"
             statusLabel.text = string.format("%s  |  Round %d",
@@ -395,7 +405,7 @@ function MTGRunPanel.Create(opts)
                 valign = "center",
                 hover = gui.Tooltip("Close the montage and review the result"),
                 click = function()
-                    MTGRun.HideFromPlayers()
+                    --The board stays up, curtained, until Complete.
                     MTGRun.EndRun()
                 end,
             },

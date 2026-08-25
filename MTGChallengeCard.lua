@@ -12,8 +12,10 @@ MTGChallengeCard = {}
 local function Slot(run, inst, slot, label)
     local placed = inst[slot]
 
-    --A rolled slot is spent: the only way back is the Director's undo.
+    --A rolled slot is spent: the only way back is the Director's undo. A roll
+    --in flight freezes it too -- its inputs are already out with the request.
     local inert = inst.adjudicatedInRound ~= nil or inst[slot .. "Roll"] ~= nil
+        or inst.resolution ~= nil
 
     local classes = { "bordered", "mtgSlot" }
     if inert then
@@ -315,7 +317,7 @@ end
 --- @return Panel
 local function SlotColumn(run, inst, ch, slot, label)
     local placed = inst[slot]
-    local locked = inst.adjudicatedInRound ~= nil
+    local locked = inst.adjudicatedInRound ~= nil or inst.resolution ~= nil
     local editable = placed ~= nil and not locked and MTGRun.CanManage(placed.charid)
 
     local pickers = {}
@@ -436,11 +438,13 @@ end
 --- @param run MTGRun
 --- @param inst table
 --- @return Panel[]
-local function RollerTokens(run, inst)
+--- @param always boolean|nil show whoever is placed, not just whoever has rolled
+local function RollerTokens(run, inst, always)
     local result = {}
     for _, slot in ipairs({ "lead", "assist" }) do
         local placed = inst[slot]
-        if placed ~= nil and (inst[slot .. "Roll"] ~= nil or inst.granted == true) then
+        if placed ~= nil and (always == true
+            or inst[slot .. "Roll"] ~= nil or inst.granted == true) then
             local token = dmhub.GetCharacterById(placed.charid)
             local p = MTGRun.Participant(run, placed.charid)
             if token ~= nil then
@@ -499,9 +503,24 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
                 attemptsLeft - 1, cond(attemptsLeft - 1 == 1, "", "s")))
     end
 
-    for _, token in ipairs(RollerTokens(run, inst)) do
-        badges[#badges + 1] = token
+    --Both strips exist because the expando toggles classes rather than
+    --rebuilding the card.
+    local function TokenStrip(always, hidden)
+        return gui.Panel{
+            classes = { cond(hidden, "collapsed") },
+            width = "auto",
+            height = "auto",
+            flow = "horizontal",
+            halign = "right",
+            valign = "center",
+            children = RollerTokens(run, inst, always),
+        }
     end
+
+    local foldedTokens = TokenStrip(true, open)
+    local openTokens = TokenStrip(false, not open)
+    badges[#badges + 1] = foldedTokens
+    badges[#badges + 1] = openTokens
 
     local resolving = inst.resolution ~= nil
     if dmhub.isDM and not adjudicated and inst.leadRoll == nil then
@@ -600,11 +619,18 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
     if open then
         arrowArgs.classes[#arrowArgs.classes + 1] = "expanded"
     end
+    local curtain = nil
+
     arrowArgs.click = function(element)
         local nowOpen = not element:HasClass("expanded")
         element:SetClass("expanded", nowOpen)
         expanded[foldKey] = nowOpen
         body:SetClass("collapsed", not nowOpen)
+        foldedTokens:SetClass("collapsed", nowOpen)
+        openTokens:SetClass("collapsed", not nowOpen)
+        if curtain ~= nil then
+            curtain:SetClass("collapsed", not nowOpen)
+        end
     end
 
     local children = {
@@ -692,6 +718,13 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
 
     body.children = bodyChildren
     children[#children + 1] = body
+
+    --Director side stays live: that is where the roll is taken back.
+    if resolving and not director then
+        curtain = MTGWidgets.Overlay("Rolling in progress...", "sizeXl", 1, 8)
+        curtain:SetClass("collapsed", not open)
+        children[#children + 1] = curtain
+    end
 
     return gui.Panel{
         classes = { "bordered", cond(adjudicated, "disabled") },

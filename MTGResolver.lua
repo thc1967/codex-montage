@@ -186,17 +186,31 @@ function MTGResolver.Trigger(instanceId)
         grantFrom = p ~= nil and p.name or nil
     end
 
+    --Players key their curtain off inst.resolution, so it has to land before
+    --the request goes out or the roll dialog beats it to the screen.
+    local startedAt = dmhub.serverTime
+
+    MTGRun.SetResolution(instanceId, {
+        phase = slot .. "_roll",
+        slot = slot,
+        actionFor = assignment.charid,
+        startedAt = startedAt,
+    })
+
     local actionId = SendRequest(ch, assignment, grant, grantFrom, slot)
     if actionId == nil then
+        MTGRun.SetResolution(instanceId, nil)
         return
     end
 
+    --A fresh table, never the one the first write handed to the document:
+    --assigning that one back over itself does not carry the new field.
     MTGRun.SetResolution(instanceId, {
         phase = slot .. "_roll",
         slot = slot,
         actionId = actionId,
         actionFor = assignment.charid,
-        startedAt = dmhub.serverTime,
+        startedAt = startedAt,
     })
 end
 
@@ -229,6 +243,13 @@ function MTGResolver.Pump()
     end
 
     local res = inst.resolution
+
+    --Set but not yet stamped: in flight, not lost. The nil lookup below would
+    --otherwise read as "cleared out from under us" and wipe it.
+    if res.actionId == nil then
+        return
+    end
+
     local req = dmhub.GetPlayerActionRequest(res.actionId)
 
     --A request cleared out from under us takes its roll with it. Treat that
