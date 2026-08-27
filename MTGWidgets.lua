@@ -245,10 +245,20 @@ function MTGWidgets.Meter(meter)
     local earnedIcon = cond(meter.tone == "danger",
         MTGConstants.iconFailure, MTGConstants.iconSuccess)
 
+    --The Director awards and takes back by hand on meters the module says may
+    --be moved. Which pip was clicked does not matter, only which side of the
+    --line it was on: a dim one adds, a lit one removes. That reads as filling
+    --the next pip or clearing the last, without the pips having to be told
+    --apart from one another.
+    local adjustable = dmhub.isDM and meter.adjustable == true and max > 0
+
     local pips = {}
     for i = 1, max do
         local earned = i <= value
-        pips[#pips + 1] = gui.Panel{
+
+        --Built in one go rather than assigned onto afterwards: hover is fixed
+        --at construction and will not take a later write.
+        local args = {
             classes = { cond(earned, MTGWidgets.ToneClass(meter.tone), "bgFgMuted") },
             width = 22,
             height = 22,
@@ -258,6 +268,17 @@ function MTGWidgets.Meter(meter)
             vmargin = 1,
             bgimage = cond(earned, earnedIcon, MTGConstants.iconPending),
         }
+
+        if adjustable then
+            args.hover = gui.Tooltip(cond(earned,
+                string.format("Take back one %s", meter.label or "point"),
+                string.format("Award one %s", meter.label or "point")))
+            args.press = function()
+                MTGRun.AdjustProgress(meter.id, cond(earned, -1, 1))
+            end
+        end
+
+        pips[#pips + 1] = gui.Panel(args)
     end
 
     --Wraps rather than clips: a Director who sets a big limit gets a second

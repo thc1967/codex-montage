@@ -377,6 +377,37 @@ function MTGRun.Meters()
     return MTGRules.GetOrDefault(run.moduleId).DescribeProgress(run)
 end
 
+--- Move one progress meter by hand.
+--- Moves the same counter adjudication moves rather than keeping a parallel
+--- manual tally: CanEnd and the ending both read that counter straight, so a
+--- second number would have to be added back in at every one of those sites to
+--- mean anything, and could disagree with this one.
+---
+--- The module's descriptor is the authority on whether a meter may be moved and
+--- how far, so it is re-read here rather than trusted from the click: a meter
+--- whose value is derived has nothing to write to.
+--- @param meterId string
+--- @param delta number
+function MTGRun.AdjustProgress(meterId, delta)
+    MTGRun.Mutate("Adjust montage progress", function(run)
+        local meter = nil
+        for _, m in ipairs(MTGRules.GetOrDefault(run.moduleId).DescribeProgress(run)) do
+            if m.id == meterId then
+                meter = m
+                break
+            end
+        end
+
+        if meter == nil or meter.adjustable ~= true then
+            return
+        end
+
+        local progress = run:get_or_add("progress", {})
+        local value = progress[meterId] or 0
+        progress[meterId] = math.max(0, math.min(meter.max or 0, value + delta))
+    end)
+end
+
 --- One attempt-in-progress on a Challenge. Rows never migrate between rounds;
 --- `adjudicatedInRound` is what decides where a row is shown.
 --- @param challengeId string
@@ -615,6 +646,25 @@ function MTGRun.DeriveCharacteristic(ch, charid)
         end
     end
     return best
+end
+
+--- Retune one of the rules module's Challenge fields mid-Run.
+--- Writes to the Run's own copy of the Challenge, so the prepped montage in the
+--- library is untouched and the change dies with the Run. Point-forward by
+--- construction: an adjudicated instance keeps the outcome it was handed, and a
+--- repeat of this Challenge picks the new value up on its next test.
+--- @param challengeId string
+--- @param fieldId string
+--- @param value any
+function MTGRun.SetChallengeField(challengeId, fieldId, value)
+    MTGRun.Mutate("Retune challenge", function(run)
+        for _, ch in ipairs(run:try_get("challenges", {})) do
+            if ch.id == challengeId then
+                ch:FieldsFor(run.moduleId)[fieldId] = value
+                return
+            end
+        end
+    end)
 end
 
 --- Record a human's characteristic pick. attrOverridden stops the derivation

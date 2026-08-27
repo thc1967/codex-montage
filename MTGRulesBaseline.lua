@@ -281,6 +281,11 @@ MTGRules.Register{
                 text = "Difficulty",
                 type = "choice",
                 default = "medium",
+                --The Director may retune this mid-Run, on any test that has not
+                --been adjudicated. A module opts a field in deliberately: most
+                --describe what a Challenge IS and have no business moving once
+                --the montage is on the table.
+                liveEditable = true,
                 options = {
                     { id = "easy", text = "Easy" },
                     { id = "medium", text = "Medium" },

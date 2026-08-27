@@ -427,7 +427,14 @@ local function ModuleFields(run, ch)
                     text = option.text
                 end
             end
-            result[#result + 1] = { label = field.text, value = text }
+            --field and raw ride along so a live card can offer the pick rather
+            --than only report it.
+            result[#result + 1] = {
+                label = field.text,
+                value = text,
+                field = field,
+                raw = value
+            }
         end
     end
     return result
@@ -687,9 +694,50 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
         }
     end
 
+    --The Director retunes a live test in place. Everyone else reads it, and so
+    --does the Director once the row is settled: the control going away is what
+    --stops a late change from looking like it rewrote a verdict already given.
+    local function MetaChoice(entry)
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            gui.Label{
+                classes = { "sizeS", "fgMuted" },
+                width = "auto",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                rmargin = 4,
+                markdown = true,
+                text = string.format("**%s:**", entry.label),
+            },
+
+            gui.Dropdown{
+                width = "50%",
+                halign = "left",
+                valign = "center",
+                options = entry.field.options,
+                idChosen = entry.raw,
+                change = function(element)
+                    MTGRun.SetChallengeField(ch.id, entry.field.id, element.idChosen)
+                end,
+            },
+        }
+    end
+
     local metaLines = {}
-    for _, field in ipairs(ModuleFields(run, ch)) do
-        metaLines[#metaLines + 1] = MetaLine(field.label, field.value)
+    for _, entry in ipairs(ModuleFields(run, ch)) do
+        if dmhub.isDM and not adjudicated
+            and entry.field.liveEditable == true
+            and entry.field.type == "choice"
+            and #(entry.field.options or {}) > 0 then
+            metaLines[#metaLines + 1] = MetaChoice(entry)
+        else
+            metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value)
+        end
     end
     metaLines[#metaLines + 1] = MetaLine("Characteristics", MTGUtils.NameList(
         ch:try_get("allowedCharacteristics", {}), MTGUtils.CharacteristicName, "any"))
