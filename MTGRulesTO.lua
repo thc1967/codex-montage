@@ -80,6 +80,22 @@ MTGRules.Register{
         undecided = "Undecided",
     },
 
+    --- What each tier means here. No difficulty to consult: the tier alone
+    --- decides, and the middle one is deliberately left for the table to
+    --- settle, which the player should know before they roll.
+    --- @param run MTGRun
+    --- @param ch MTGChallengeDef
+    --- @return string[] labels tier 1-3, then the critical
+    TierLabels = function(run, ch)
+        local rules = MTGRules.GetOrDefault(run.moduleId)
+        return {
+            rules.OutcomeLabels.failure,
+            rules.OutcomeLabels.undecided,
+            rules.OutcomeLabels.success,
+            rules.OutcomeLabels.success,
+        }
+    end,
+
     --- No difficulty here: the tier alone decides, and the middle tier is the
     --- table's to settle rather than the app's.
     --- @param run MTGRun

@@ -1,5 +1,25 @@
 local mod = dmhub.GetModLoading()
 
+--- Which outcome each tier lands on, by the Challenge's difficulty. Read by
+--- both the roll resolution and the tier text shown in the roll dialog, so the
+--- two can never drift apart and tell the player different things.
+local g_tiersByDifficulty = {
+    easy = { "success_consequence", "success", "success_reward" },
+    medium = { "failure", "success_consequence", "success" },
+    hard = { "failure_consequence", "failure", "success" },
+}
+
+--- The difficulty a Challenge is being run at.
+--- @param run MTGRun
+--- @param ch MTGChallengeDef
+--- @return string difficulty
+local function DifficultyOf(run, ch)
+    return ch:FieldValue(run.moduleId, {
+        id = "difficulty",
+        default = "medium",
+    })
+end
+
 --- Draw Steel montage tests as written. The root module: every other module
 --- inherits from this one and overrides only what it changes.
 MTGRules.Register{
@@ -81,16 +101,8 @@ MTGRules.Register{
         if (roll.naturalRoll or 0) >= 19 then
             id = "success_reward"
         else
-            local byDifficulty = {
-                easy = { "success_consequence", "success", "success_reward" },
-                medium = { "failure", "success_consequence", "success" },
-                hard = { "failure_consequence", "failure", "success" },
-            }
-            local difficulty = ch:FieldValue(run.moduleId, {
-                id = "difficulty",
-                default = "medium",
-            })
-            local column = byDifficulty[difficulty] or byDifficulty.medium
+            local column = g_tiersByDifficulty[DifficultyOf(run, ch)]
+                or g_tiersByDifficulty.medium
             id = column[math.max(1, math.min(3, roll.tier or 1))]
         end
 
@@ -99,6 +111,27 @@ MTGRules.Register{
             label = rules.OutcomeLabels[id] or id,
             tone = cond(string.sub(id, 1, 7) == "failure", "danger", "success"),
         }
+    end,
+
+    --- What each tier of the roll means, for the roll dialog's power table.
+    --- Read from the same map the resolution uses, so what the player is told
+    --- before rolling is what the roll then does. The fourth row is the
+    --- critical, which outranks difficulty entirely.
+    --- @param run MTGRun
+    --- @param ch MTGChallengeDef
+    --- @return string[] labels tier 1-3, then the critical
+    TierLabels = function(run, ch)
+        local rules = MTGRules.GetOrDefault(run.moduleId)
+        local column = g_tiersByDifficulty[DifficultyOf(run, ch)]
+            or g_tiersByDifficulty.medium
+
+        local labels = {}
+        for i = 1, 3 do
+            labels[i] = rules.OutcomeLabels[column[i]] or column[i]
+        end
+        labels[4] = rules.OutcomeLabels.success_reward
+
+        return labels
     end,
 
     --- What the Director hands out when they grant a success without a roll.

@@ -76,24 +76,30 @@ RollCheck.RegisterCustom{
         return result
     end,
 
+    --Tiers ride on options, which is where the request dialog looks for them
+    --too. Built only when they are actually there: the power table reads
+    --#rollProperties.tiers, so handing it a table without them raises rather
+    --than degrading -- which is what a request sent by an older client, or by
+    --a rules module with no TierLabels, would otherwise do.
     ShowDialog = function(check, dialogOptions)
-        dialogOptions.rollProperties = RollPropertiesPowerTable.new{
-            tiers = DeepCopy(check.info.tiers),
-        }
-        dialogOptions.PopulateCustom = ActivatedAbilityPowerRollBehavior.GetPowerTablePopulateCustom(
-            dialogOptions.rollProperties, dialogOptions.creature)
+        --A montage roll is read, not admired: the tier table and the modifiers
+        --have to be legible over whatever the map is showing. The frame's blur
+        --is what makes it see-through, so opacity alone would not do it.
+        dialogOptions.solidDialog = true
+
+        local tiers = check:try_get("options", {}).tiers
+
+        if tiers ~= nil then
+            dialogOptions.rollProperties = RollPropertiesPowerTable.new{
+                tiers = DeepCopy(tiers),
+            }
+            dialogOptions.PopulateCustom = ActivatedAbilityPowerRollBehavior.GetPowerTablePopulateCustom(
+                dialogOptions.rollProperties, dialogOptions.creature)
+        end
+
         return GameHud.instance.rollDialog.data.ShowDialog(dialogOptions)
     end,
 }
-
---- What each tier does, as the player's power table reads it. The rules
---- module owns this text; until it maps tiers to outcomes the table just
---- names them.
---- @param ch MTGChallengeDef
---- @return string[]
-local function TierLabels(ch)
-    return { "Tier 1", "Tier 2", "Tier 3" }
-end
 
 --- The modtype the assist's roll earned the Lead, or nil when the assist has
 --- not rolled. Derived rather than stored, so undoing the assist roll takes
@@ -109,13 +115,14 @@ function MTGResolver.AssistGrant(run, inst)
 end
 
 --- Ask this Participant's player to roll.
+--- @param run MTGRun
 --- @param ch MTGChallengeDef
 --- @param assignment table
 --- @param grant string|nil a modtype the assist earned this roller
 --- @param grantFrom string|nil who earned it
 --- @param role string "lead" or "assist"
 --- @return string|nil actionId
-local function SendRequest(ch, assignment, grant, grantFrom, role)
+local function SendRequest(run, ch, assignment, grant, grantFrom, role)
     local attrName = MTGUtils.CharacteristicName(assignment.attrId)
     local skills = {}
     if assignment.skillId ~= nil and assignment.skillId ~= "" then
@@ -129,6 +136,13 @@ local function SendRequest(ch, assignment, grant, grantFrom, role)
 
     local explanation = string.format("%s (%s)", title, attrName)
 
+    --The roll dialog reads its power table off options.tiers -- NOT info, which
+    --nothing looks at. Each module says what its own tiers mean, so Baseline
+    --answers with the outcomes for this Challenge's difficulty and T&O with its
+    --own three, and the player reads the real stakes before rolling.
+    local rules = MTGRules.GetOrDefault(run.moduleId)
+    local tiers = rules.TierLabels ~= nil and rules.TierLabels(run, ch) or nil
+
     local check = RollCheck.new{
         type = MTGConstants.rollCheckId,
         id = MTGConstants.rollCheckId,
@@ -136,10 +150,10 @@ local function SendRequest(ch, assignment, grant, grantFrom, role)
         explanation = explanation,
         skills = skills,
         modifiers = {},
+        options = tiers ~= nil and { tiers = tiers } or nil,
         info = {
             attrid = assignment.attrId,
             explanation = explanation,
-            tiers = TierLabels(ch),
             assistGrant = grant,
             assistName = grant ~= nil and string.format("Assisted by %s", grantFrom or "an ally") or nil,
             assistDescription = grant ~= nil and string.format("%s's assist gave you a %s.",
@@ -197,7 +211,7 @@ function MTGResolver.Trigger(instanceId)
         startedAt = startedAt,
     })
 
-    local actionId = SendRequest(ch, assignment, grant, grantFrom, slot)
+    local actionId = SendRequest(run, ch, assignment, grant, grantFrom, slot)
     if actionId == nil then
         MTGRun.SetResolution(instanceId, nil)
         return
