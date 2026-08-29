@@ -6,21 +6,13 @@ MTGEndingPanel = {}
 
 --- The Director's summary. Lives in the montage dialog and reads the live Run,
 --- so the result can still be changed and the Victories awarded. Nothing has
---- gone out to the table yet.
+--- gone out to the table yet. The Victories, the journal check and Complete go
+--- to the shell's footer, so this hands them out rather than mounting them.
 --- @param opts nil|{director: boolean}
---- @return Panel
+--- @return {body: Panel, footer: table[]} the summary and its footer cells
 function MTGEndingPanel.Create(opts)
     opts = opts or {}
     local director = opts.director == true
-
-    local titleLabel = gui.Label{
-        classes = { "modalTitle", "sizeXl" },
-        width = "100%",
-        height = "auto",
-        halign = "left",
-        valign = "top",
-        text = "Montage Complete",
-    }
 
     local reportPanel = gui.Panel{
         width = "100%",
@@ -91,9 +83,8 @@ function MTGEndingPanel.Create(opts)
         classes = { "sizeS" },
         width = 180,
         height = 22,
-        halign = "left",
+        halign = "center",
         valign = "center",
-        rmargin = 8,
         text = "Write to journal",
         value = true,
         hover = gui.Tooltip("Leave a record in Private Documents / Montage Results"),
@@ -102,33 +93,33 @@ function MTGEndingPanel.Create(opts)
         end,
     }
 
-    local victoryRow = gui.Panel{
-        classes = { cond(not director, "collapsed") },
+    --The three cells the shell's footer takes. victoryInput and journalCheck
+    --stay locals so Complete can still read them from here.
+    local victoryCell = gui.Panel{
         width = "100%",
         height = "auto",
         flow = "horizontal",
-        valign = "top",
-        tmargin = 8,
+        halign = "left",
+        valign = "center",
 
         trophyIcon,
         victoryLabel,
         victoryInput,
-        journalCheck,
+    }
 
-        gui.Button{
-            classes = { "sizeS" },
-            width = 100,
-            text = "Complete",
-            halign = "right",
-            valign = "center",
-            hover = gui.Tooltip("Award the Victories, announce the result, clear the montage"),
-            click = function()
-                --Commit the field first: a value typed and never blurred has
-                --not reached the Run yet.
-                MTGRun.SetEndingVictories(tonumber(victoryInput.text) or 0)
-                MTGRun.CompleteRun()
-            end,
-        },
+    local completeButton = gui.Button{
+        classes = { "sizeS" },
+        width = 100,
+        text = "Complete",
+        halign = "right",
+        valign = "center",
+        hover = gui.Tooltip("Award the Victories, announce the result, clear the montage"),
+        click = function()
+            --Commit the field first: a value typed and never blurred has
+            --not reached the Run yet.
+            MTGRun.SetEndingVictories(tonumber(victoryInput.text) or 0)
+            MTGRun.CompleteRun()
+        end,
     }
 
     local resultPanel
@@ -150,11 +141,9 @@ function MTGEndingPanel.Create(opts)
                 return
             end
 
-            titleLabel.text = string.format("%s — Complete", run.name or "Montage")
-
             local sections = {}
             for _, section in ipairs(ending.sections or {}) do
-                sections[#sections + 1] = MTGWidgets.SubHeader(section.title or "")
+                sections[#sections + 1] = MTGWidgets.SubHeader(section.title or "", "sizeXl")
                 for _, entry in ipairs(section.entries or {}) do
                     sections[#sections + 1] = gui.Label{
                         classes = { "sizeM", "noBold" },
@@ -198,24 +187,30 @@ function MTGEndingPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
-        titleLabel,
         degreeLabel,
         degreeDropdown,
 
+        --Takes what the heading and the degree picker leave, so losing the
+        --victory row to the shell's footer gives the report that height back.
         gui.Panel{
             width = "100%",
-            height = "100%-160",
+            height = "100% available",
             flow = "vertical",
             valign = "top",
             vscroll = true,
 
             reportPanel,
         },
-
-        victoryRow,
     }
 
-    return resultPanel
+    return {
+        body = resultPanel,
+        footer = {
+            { slot = cond(director, victoryCell) },
+            { slot = cond(director, journalCheck) },
+            { slot = cond(director, completeButton) },
+        },
+    }
 end
 
 --- The celebration the whole table sees once the Director is done: the award
@@ -312,7 +307,7 @@ function MTGEndingPanel.CreateCelebration(payload)
     for _, row in ipairs(payload.recap or {}) do
         local lines = {}
         if row.led > 0 or row.assisted > 0 then
-            lines[#lines + 1] = string.format("Led %d  ·  Assisted %d", row.led, row.assisted)
+            lines[#lines + 1] = string.format("Led %d  |  Assisted %d", row.led, row.assisted)
         else
             lines[#lines + 1] = "Stood by"
         end

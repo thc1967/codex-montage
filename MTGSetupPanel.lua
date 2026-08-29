@@ -163,8 +163,9 @@ local function SettingField(run, field)
     }
 end
 
---- The Setup half of the montage form.
---- @return Panel
+--- The Setup half of the montage form. Its Cancel and Start go to the shell's
+--- footer, so this hands them out rather than mounting them itself.
+--- @return {body: Panel, footer: table[]} the pane and its footer cells
 function MTGSetupPanel.Create()
     local titleLabel = gui.Label{
         classes = { "tableLabel" },
@@ -238,9 +239,11 @@ function MTGSetupPanel.Create()
         titleLabel,
         settingsPanel,
 
+        --Takes what the title and settings rows leave, so losing the button
+        --row to the shell's footer gives the columns that height back.
         gui.Panel{
             width = "100%",
-            height = "100%-140",
+            height = "100% available",
             flow = "horizontal",
             valign = "top",
             tmargin = 8,
@@ -269,34 +272,35 @@ function MTGSetupPanel.Create()
             },
         },
 
-        gui.Panel{
-            width = "100%",
-            height = 40,
-            flow = "horizontal",
-            valign = "bottom",
+    }
 
-            gui.Button{
-                classes = { "sizeS" },
-                text = "Cancel",
-                halign = "left",
-                valign = "center",
-                click = function()
-                    MTGRun.Discard()
-                end,
+    return {
+        body = resultPanel,
+        footer = {
+            {
+                slot = gui.Button{
+                    classes = { "sizeS" },
+                    text = "Cancel",
+                    halign = "left",
+                    valign = "center",
+                    click = function()
+                        MTGRun.Discard()
+                    end,
+                },
             },
-
-            gui.Button{
-                classes = { "sizeS" },
-                text = "Start",
-                halign = "right",
-                valign = "center",
-                click = function(element)
-                    MTGRun.Start()
-                    MTGRun.PresentToPlayers(element)
-                end,
+            {},
+            {
+                slot = gui.Button{
+                    classes = { "sizeS" },
+                    text = "Start",
+                    halign = "right",
+                    valign = "center",
+                    click = function(element)
+                        MTGRun.Start()
+                        MTGRun.PresentToPlayers(element)
+                    end,
+                },
             },
         },
     }
-
-    return resultPanel
 end

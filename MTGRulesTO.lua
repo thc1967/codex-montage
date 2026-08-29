@@ -207,7 +207,7 @@ MTGRules.Register{
             if text == nil or text == "" then
                 text = ch.name or ""
             else
-                text = string.format("%s — %s", ch.name or "", text)
+                text = string.format("%s - %s", ch.name or "", text)
             end
 
             if fields.type == "opportunity" then

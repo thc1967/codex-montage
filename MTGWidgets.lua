@@ -23,10 +23,11 @@ function MTGWidgets.ToneClass(tone)
 end
 
 --- @param text string
+--- @param sizeClass nil|string overrides the default size
 --- @return Panel
-function MTGWidgets.SubHeader(text)
+function MTGWidgets.SubHeader(text, sizeClass)
     return gui.Label{
-        classes = { "tableLabel", "sizeXs" },
+        classes = { "tableLabel", sizeClass or "sizeXs" },
         width = "100%",
         height = "auto",
         valign = "top",

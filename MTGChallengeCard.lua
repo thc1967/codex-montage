@@ -250,7 +250,7 @@ local function RollSummary(run, inst, ch, slot, assignment, roll)
 
     return {
         Line(string.format("**%s**", verdict)),
-        Line(table.concat(parts, " · ")),
+        Line(table.concat(parts, " | ")),
     }
 end
 

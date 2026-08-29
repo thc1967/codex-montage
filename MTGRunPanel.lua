@@ -3,8 +3,10 @@ local mod = dmhub.GetModLoading()
 --- The montage in play.
 MTGRunPanel = {}
 
+--- The Director's controls go to the shell's footer, so this hands them out
+--- rather than mounting them itself. The player's board has no footer.
 --- @param opts nil|{director: boolean}
---- @return Panel
+--- @return {body: Panel, footer: table[]} the board and its footer cells
 function MTGRunPanel.Create(opts)
     opts = opts or {}
     local director = opts.director == true
@@ -76,6 +78,18 @@ function MTGRunPanel.Create(opts)
         valign = "top",
     }
 
+    --Stands where the tray does while the table waits on the Director.
+    local finalizingLabel = gui.Label{
+        classes = { "sizeL", "noBold", "fgMuted", "collapsed" },
+        width = "100%",
+        height = "auto",
+        halign = "center",
+        valign = "top",
+        textAlignment = "center",
+        vmargin = 8,
+        text = "The Director is finalizing the montage...",
+    }
+
     local boardPanel = gui.Panel{
         width = "100%",
         height = "auto",
@@ -83,12 +97,171 @@ function MTGRunPanel.Create(opts)
         valign = "top",
     }
 
-    --Two levels: this board sits inside the player's dialog, and the curtain
-    --covers the dialog rather than just the board.
-    local reviewCurtain = MTGWidgets.Overlay(
-        "Director is reviewing the results...", "sizeXxl", 2, 16)
+    --- A participant's portrait, crowned when they led the test. The crown
+    --- floats over the corner rather than taking a column of its own.
+    --- @param p MTGParticipant
+    --- @param lead boolean
+    --- @return Panel|nil
+    local function SummaryToken(p, lead)
+        local portrait = MTGWidgets.ParticipantToken(p, false, nil, false)
+        if portrait == nil then
+            return nil
+        end
 
-    local pauseButton = gui.Button{
+        if not lead then
+            return portrait
+        end
+
+        return gui.Panel{
+            width = 44,
+            height = 40,
+            flow = "none",
+            halign = "left",
+            valign = "center",
+
+            portrait,
+
+            gui.Panel{
+                classes = { "bgAccent" },
+                floating = true,
+                interactable = false,
+                width = 16,
+                height = 16,
+                halign = "right",
+                valign = "top",
+                bgimage = "phosphor/crown-duotone.png",
+            },
+        }
+    end
+
+    --- One test: everyone who worked it, what it was, and how it came out. The
+    --- badge is the module's own, so this reads the same as the board's rows.
+    --- @param run MTGRun
+    --- @param inst table
+    --- @param rules table the run's rules module
+    --- @return Panel|nil
+    local function SummaryRow(run, inst, rules)
+        local ch = MTGRun.ChallengeFor(run, inst)
+        if ch == nil then
+            return nil
+        end
+
+        local tokens = {}
+        if inst.lead ~= nil then
+            tokens[#tokens + 1] = SummaryToken(inst.lead, true)
+        end
+        if inst.assist ~= nil then
+            tokens[#tokens + 1] = SummaryToken(inst.assist, false)
+        end
+
+        local status = rules.ChallengeStatus(run, inst, ch)
+
+        return gui.Panel{
+            classes = { "row" },
+            width = "100%",
+            height = 48,
+            flow = "horizontal",
+            halign = "left",
+            valign = "top",
+
+            gui.Panel{
+                width = 96,
+                height = "100%",
+                flow = "horizontal",
+                halign = "left",
+                valign = "center",
+                lmargin = 8,
+
+                children = tokens,
+            },
+
+            gui.Label{
+                classes = { "sizeM" },
+                width = "100% available",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                lmargin = 8,
+                textWrap = true,
+                text = ch.name or "",
+            },
+
+            gui.Panel{
+                classes = { MTGWidgets.ToneClass(status.tone) },
+                width = 20,
+                height = 20,
+                halign = "right",
+                valign = "center",
+                rmargin = 12,
+                bgimage = status.icon,
+                hover = gui.Tooltip(status.tooltip or ""),
+            },
+        }
+    end
+
+    --- Every test the table attempted, in the order the board showed them:
+    --- round by round, and within a round the module's own sort.
+    --- @param run MTGRun
+    --- @return Panel[]
+    local function SummaryRows(run)
+        local rules = MTGRules.GetOrDefault(run.moduleId)
+        local rows = {}
+
+        for round = 1, run.round or 1 do
+            local byChallenge = {}
+            for _, inst in ipairs(MTGRun.InstancesForRound(run, round)) do
+                local ch = MTGRun.ChallengeFor(run, inst)
+                if ch ~= nil then
+                    byChallenge[ch.id] = byChallenge[ch.id] or {}
+                    local bucket = byChallenge[ch.id]
+                    bucket[#bucket + 1] = inst
+                end
+            end
+
+            for _, ch in ipairs(rules.SortChallenges(run, MTGRun.ActiveChallenges(run))) do
+                for _, inst in ipairs(byChallenge[ch.id] or {}) do
+                    --Attempted means resolved: an untouched Challenge has
+                    --nothing to report, and a hidden one was never on the
+                    --table's board to begin with.
+                    if inst.outcome ~= nil
+                        and not MTGRun.IsChallengeHidden(run, inst.challengeId) then
+                        rows[#rows + 1] = SummaryRow(run, inst, rules)
+                    end
+                end
+            end
+        end
+
+        return rows
+    end
+
+    --What the table reads once the Director ends the montage: every test they
+    --attempted, in board order, with who led and how it came out.
+    local summaryPanel = gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "100% available",
+        flow = "vertical",
+        valign = "top",
+        vscroll = true,
+    }
+
+    --Takes whatever the rows above and the footer below leave, so the
+    --description growing costs the board height instead of pushing the footer
+    --off the bottom. Swaps with the summary once the montage is over.
+    local boardScroll = gui.Panel{
+        width = "100%",
+        height = "100% available",
+        flow = "vertical",
+        valign = "top",
+        vscroll = true,
+
+        boardPanel,
+    }
+
+    --Director-only, and built only for them: the player's board has no footer
+    --to mount these in, and a panel nothing parents is a leak the engine
+    --complains about at creation.
+    local pauseButton = director and gui.Button{
         classes = { "sizeS" },
         text = "Pause",
         halign = "left",
@@ -106,9 +279,9 @@ function MTGRunPanel.Create(opts)
                 MTGRun.PresentToPlayers(element)
             end
         end,
-    }
+    } or nil
 
-    local advanceButton = gui.Button{
+    local advanceButton = director and gui.Button{
         classes = { "sizeS" },
         text = "Next Round",
         width = 100,
@@ -118,7 +291,7 @@ function MTGRunPanel.Create(opts)
         click = function()
             MTGRun.AdvanceRound()
         end,
-    }
+    } or nil
 
     local resultPanel
     --"available" is measured against the parent's CONTENT area, so this fits
@@ -134,21 +307,32 @@ function MTGRunPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
-        reviewCurtain,
-
         rebuild = function()
             local run = MTGRun.Active()
             if run == nil then
                 return
             end
 
-            reviewCurtain:SetClass("collapsed",
-                director or run.status ~= MTGConstants.statusEnded)
+            --The table reads the summary once the montage is over; the
+            --Director keeps the board, since they are still working on it.
+            local reviewing = not director
+                and run.status == MTGConstants.statusEnded
+            summaryPanel:SetClass("collapsed", not reviewing)
+            boardScroll:SetClass("collapsed", reviewing)
+            --The tray is for staging heroes, which is over: the notice takes
+            --its place rather than leaving a gap.
+            trayPanel:SetClass("collapsed", reviewing)
+            finalizingLabel:SetClass("collapsed", not reviewing)
+            if reviewing then
+                summaryPanel.children = SummaryRows(run)
+            end
 
             titleLabel.text = run.name or "Montage"
             statusLabel.text = string.format("%s  |  Round %d",
                 cond(run.paused == true, "PAUSED", "In play"), run.round or 1)
-            pauseButton.text = cond(run.paused == true, "Resume", "Pause")
+            if pauseButton ~= nil then
+                pauseButton.text = cond(run.paused == true, "Resume", "Pause")
+            end
 
             local description = run:try_get("description", "")
             descriptionLabel.text = description
@@ -333,7 +517,10 @@ function MTGRunPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
+        --The player's window carries the name, state and round in its shell
+        --header instead, so this row is the Director's alone.
         gui.Panel{
+            classes = { cond(not director, "collapsed") },
             width = "100%",
             height = "auto",
             flow = "horizontal",
@@ -348,73 +535,84 @@ function MTGRunPanel.Create(opts)
         metersPanel,
 
         trayPanel,
+        finalizingLabel,
 
-        --Takes whatever the rows above and the footer below leave, so the
-        --description growing costs the board height instead of pushing the
-        --footer off the bottom.
-        gui.Panel{
-            width = "100%",
-            height = "100% available",
-            flow = "vertical",
-            valign = "top",
-            vscroll = true,
+        boardScroll,
+        summaryPanel,
+    }
 
-            boardPanel,
+    if not director then
+        return { body = resultPanel }
+    end
+
+    --Handed to the shell rather than mounted here: pauseButton and
+    --advanceButton stay locals so rebuild keeps updating them wherever they
+    --end up sitting.
+    local leftGroup = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        halign = "left",
+        valign = "center",
+
+        pauseButton,
+
+        gui.Button{
+            classes = { "sizeS" },
+            text = "Reset",
+            halign = "left",
+            valign = "center",
+            hmargin = 8,
+            hover = gui.Tooltip("Throw away every roll and go back to setup"),
+            click = function()
+                MTGRun.HideFromPlayers()
+                MTGRun.Reset()
+            end,
         },
 
-        gui.Panel{
-            classes = { cond(not director, "collapsed") },
-            width = "100%",
-            height = 40,
-            flow = "horizontal",
-            valign = "bottom",
-
-            pauseButton,
-
-            gui.Button{
-                classes = { "sizeS" },
-                text = "Reset",
-                halign = "left",
-                valign = "center",
-                hmargin = 8,
-                hover = gui.Tooltip("Throw away every roll and go back to setup"),
-                click = function()
-                    MTGRun.HideFromPlayers()
-                    MTGRun.Reset()
-                end,
-            },
-
-            --Anything else presented to the table evicts this board from the
-            --players' screens, and re-presenting on our own would race the
-            --thing that evicted it.
-            gui.Button{
-                classes = { "sizeS" },
-                -- styles = { width = 80, priority = 50 },
-                width = 100,
-                text = "Show Players",
-                halign = "left",
-                valign = "center",
-                hover = gui.Tooltip("Put the board back on the players' screens"),
-                click = function(element)
-                    MTGRun.PresentToPlayers(element)
-                end,
-            },
-
-            advanceButton,
-
-            gui.Button{
-                classes = { "sizeS" },
-                text = "End",
-                halign = "right",
-                valign = "center",
-                hover = gui.Tooltip("Close the montage and review the result"),
-                click = function()
-                    --The board stays up, curtained, until Complete.
-                    MTGRun.EndRun()
-                end,
-            },
+        --Anything else presented to the table evicts this board from the
+        --players' screens, and re-presenting on our own would race the
+        --thing that evicted it.
+        gui.Button{
+            classes = { "sizeS" },
+            width = 100,
+            text = "Show Players",
+            halign = "left",
+            valign = "center",
+            hover = gui.Tooltip("Put the board back on the players' screens"),
+            click = function(element)
+                MTGRun.PresentToPlayers(element)
+            end,
         },
     }
 
-    return resultPanel
+    local rightGroup = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        halign = "right",
+        valign = "center",
+
+        advanceButton,
+
+        gui.Button{
+            classes = { "sizeS" },
+            text = "End",
+            halign = "right",
+            valign = "center",
+            hover = gui.Tooltip("Close the montage and review the result"),
+            click = function()
+                --The board stays up, curtained, until Complete.
+                MTGRun.EndRun()
+            end,
+        },
+    }
+
+    return {
+        body = resultPanel,
+        footer = {
+            { slot = leftGroup, width = MTGConstants.footerCellsRun[1] },
+            { slot = rightGroup, width = MTGConstants.footerCellsRun[2] },
+        },
+    }
 end

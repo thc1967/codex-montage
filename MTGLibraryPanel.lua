@@ -90,9 +90,11 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
             onSelect(defid)
         end,
 
+        --Takes everything the rules icon and the controls leave, so a name has
+        --the room and the icon sits over against them on the right.
         gui.Label{
             classes = { "sizeS" },
-            width = "56%",
+            width = "100% available",
             height = "auto",
             lmargin = 8,
             halign = "left",
@@ -110,8 +112,10 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
             hover = gui.Tooltip(MTGRules.Name(def.moduleId)),
         },
 
+        --Sized to the two buttons rather than a share of the row, so the name
+        --gets back what a fixed share was over-reserving.
         gui.Panel{
-            width = "26%",
+            width = "auto",
             height = "100%",
             flow = "horizontal",
             halign = "right",
