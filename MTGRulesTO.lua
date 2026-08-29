@@ -14,9 +14,12 @@ MTGRules.Register{
     --- @param challenges MTGChallengeDef[]
     --- @return MTGChallengeDef[]
     SortChallenges = function(run, challenges)
+        --Authored order, captured before sorting, breaks ties inside a group.
         local sorted = {}
-        for _, ch in ipairs(challenges) do
+        local authored = {}
+        for i, ch in ipairs(challenges) do
             sorted[#sorted + 1] = ch
+            authored[ch.id] = i
         end
         table.sort(sorted, function(a, b)
             local ra, rb = a.availableFromRound or 1, b.availableFromRound or 1
@@ -30,7 +33,7 @@ MTGRules.Register{
             if ta ~= tb then
                 return ta < tb
             end
-            return string.lower(a.name or "") < string.lower(b.name or "")
+            return (authored[a.id] or 0) < (authored[b.id] or 0)
         end)
         return sorted
     end,

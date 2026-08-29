@@ -10,12 +10,21 @@ local mod = dmhub.GetModLoading()
 --- @field repeatable number how many times it may be attempted AGAIN
 --- @field availableFromRound number
 --- @field moduleFields table keyed by rules module id
+--- @field hidden boolean authored out of sight, for the Director to reveal
 MTGChallengeDef = RegisterGameType("MTGChallengeDef")
 
 MTGChallengeDef.name = "New Challenge"
 MTGChallengeDef.description = ""
 MTGChallengeDef.repeatable = 0
 MTGChallengeDef.availableFromRound = 1
+
+--- Declared on the type, which is what makes every Challenge authored before
+--- this existed read as visible without a migration touching the library.
+MTGChallengeDef.hidden = false
+
+--- Keeps the difficulty off the players' card and out of the roll they are
+--- asked for. Draw Steel only: T&O has no difficulty to hide.
+MTGChallengeDef.difficultyHidden = false
 
 --- How many further attempts this Challenge allows. Stored as a count now;
 --- a legacy boolean true meant "always", which reads as the cap.
@@ -366,6 +375,59 @@ local function MutateChallenge(defid, challengeId, description, fn)
         if ch ~= nil then
             fn(ch, def)
         end
+    end)
+end
+
+--- Move one Challenge up or down the authored order.
+--- Order IS the array: no field to add, so nothing authored before this can be
+--- missing it. Crossing a group boundary adopts the neighbour's grouping rather
+--- than refusing the move -- dragging something into Round 2 is taken to mean
+--- it belongs to Round 2.
+--- @param defid string
+--- @param challengeId string
+--- @param delta number -1 for up, 1 for down
+function MTGDefinition.MoveChallenge(defid, challengeId, delta)
+    local step = cond((delta or 0) < 0, -1, 1)
+
+    MTGDefinition.Mutate("Reorder challenge", function(defs)
+        local def = defs[defid]
+        if def == nil then
+            return
+        end
+
+        local challenges = def:try_get("challenges")
+        if challenges == nil then
+            return
+        end
+
+        local from = nil
+        for i, ch in ipairs(challenges) do
+            if ch.id == challengeId then
+                from = i
+                break
+            end
+        end
+
+        local to = from ~= nil and from + step or nil
+        if from == nil or to == nil or to < 1 or to > #challenges then
+            return
+        end
+
+        local moving = challenges[from]
+        local neighbour = challenges[to]
+
+        --Adopted before the swap, while the neighbour still names the group
+        --being moved into.
+        moving.availableFromRound = neighbour.availableFromRound or 1
+        if def.moduleId == MTGConstants.moduleTO then
+            local theirs = neighbour:FieldsFor(MTGConstants.moduleTO).type
+            if theirs ~= nil then
+                moving:FieldsFor(MTGConstants.moduleTO).type = theirs
+            end
+        end
+
+        table.remove(challenges, from)
+        table.insert(challenges, to, moving)
     end)
 end
 

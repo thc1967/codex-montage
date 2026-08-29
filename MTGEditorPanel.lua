@@ -203,14 +203,48 @@ local function ChallengeModuleField(store, ch, moduleId, field, hint)
     local value = ch:FieldValue(moduleId, field)
 
     if field.type == "choice" then
-        return FormRow(field.text, FIELD_WIDTH, gui.Dropdown{
+        local control = gui.Dropdown{
             classes = { "formStacked", "sizeS" },
             options = field.options,
             idChosen = value,
             change = function(element)
                 store.SetModuleField(field.id, element.idChosen)
             end,
-        }, hint)
+        }
+
+        --Difficulty alone can be kept from the table. Nothing else a module
+        --contributes is a secret worth keeping, and T&O has no difficulty.
+        if field.id == "difficulty" then
+            local current = store.Read()
+            local hidden = current ~= nil and current:try_get("difficultyHidden", false) == true
+
+            control = gui.Panel{
+                width = "100%",
+                height = "auto",
+                flow = "horizontal",
+                valign = "center",
+
+                control,
+
+                gui.Button{
+                    classes = { "sizeXs" },
+                    icon = cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
+                    width = 16,
+                    height = 16,
+                    halign = "left",
+                    valign = "center",
+                    lmargin = 6,
+                    hover = gui.Tooltip(cond(hidden,
+                        "Difficulty hidden from the table. Press to show it.",
+                        "The table can see the difficulty. Press to hide it.")),
+                    click = function()
+                        store.SetField("difficultyHidden", not hidden)
+                    end,
+                },
+            }
+        end
+
+        return FormRow(field.text, FIELD_WIDTH, control, hint)
     end
 
     return FormRow(field.text, "60%", gui.Input{
@@ -566,6 +600,57 @@ local function ChallengeCard(defid, def, ch, index, expanded)
 
     local topRight = {}
 
+    --Authored order is the array's own order, so these move the Challenge
+    --rather than setting a number. One glyph for both: the up arrow is the same
+    --asset turned over.
+    --Only the moves that exist: nothing to press at the ends of the list, so
+    --nothing is drawn there.
+    local total = #(def:try_get("challenges", {}))
+    local moves = {}
+    if index > 1 then
+        moves[#moves + 1] = { delta = -1, up = true }
+    end
+    if index < total then
+        moves[#moves + 1] = { delta = 1, up = false }
+    end
+
+    for _, move in ipairs(moves) do
+        topRight[#topRight + 1] = gui.Button{
+            classes = { "sizeXs" },
+            icon = "phosphor/arrow-fat-down-fill.png",
+            rotate = cond(move.up, 180, 0),
+            width = 16,
+            height = 16,
+            halign = "right",
+            valign = "center",
+            hmargin = 2,
+            hover = gui.Tooltip(cond(move.up, "Move up", "Move down")),
+            click = function()
+                MTGDefinition.MoveChallenge(defid, chid, move.delta)
+            end,
+        }
+    end
+
+    --Authored here and nowhere else: hiding is a decision about how the montage
+    --is built, not a lever to pull mid-play.
+    local hidden = ch:try_get("hidden", false) == true
+
+    topRight[#topRight + 1] = gui.Button{
+        classes = { "sizeXs" },
+        icon = cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
+        width = 16,
+        height = 16,
+        halign = "right",
+        valign = "center",
+        hmargin = 2,
+        hover = gui.Tooltip(cond(hidden,
+            "Hidden. Press to make it visible.",
+            "Visible. Press to hide it.")),
+        click = function()
+            MTGDefinition.SetChallengeField(defid, chid, "hidden", not hidden)
+        end,
+    }
+
     if complete then
         topRight[#topRight + 1] = gui.Panel{
             classes = { "image" },
@@ -633,7 +718,10 @@ local function ChallengeCard(defid, def, ch, index, expanded)
                 height = "auto",
                 halign = "left",
                 valign = "center",
-                text = "Challenge " .. tostring(index),
+                --Falls back to the ordinal only while the Challenge is nameless,
+                --which is the state a freshly added one arrives in.
+                text = cond(ch:try_get("name", "") ~= "",
+                    ch.name, "Challenge " .. tostring(index)),
             },
 
             summaryLabel,

@@ -605,6 +605,28 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
         }
     end
 
+    --Immediately left of the status badge, and only on the Director's board:
+    --on the players' board a hidden Challenge is not drawn at all, so there is
+    --nothing there to toggle.
+    if director then
+        local hidden = MTGRun.IsChallengeHidden(run, ch.id)
+        badges[#badges + 1] = gui.Button{
+            classes = { "sizeXs" },
+            icon = cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
+            width = 18,
+            height = 18,
+            halign = "right",
+            valign = "center",
+            lmargin = 6,
+            hover = gui.Tooltip(cond(hidden,
+                "Hidden from the table. Press to reveal it.",
+                "The table can see this. Press to hide it.")),
+            click = function()
+                MTGRun.SetChallengeHidden(ch.id, not hidden)
+            end,
+        }
+    end
+
     badges[#badges + 1] = Badge(status.icon, status.tooltip, status.tone)
 
     local body = gui.Panel{
@@ -725,12 +747,38 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
                     MTGRun.SetChallengeField(ch.id, entry.field.id, element.idChosen)
                 end,
             },
+
+            entry.field.id == "difficulty" and gui.Button{
+                classes = { "sizeXs" },
+                icon = cond(MTGRun.IsDifficultyHidden(run, ch.id),
+                    "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
+                width = 16,
+                height = 16,
+                halign = "left",
+                valign = "center",
+                lmargin = 6,
+                hover = gui.Tooltip(cond(MTGRun.IsDifficultyHidden(run, ch.id),
+                    "Difficulty hidden from the table. Press to show it.",
+                    "The table can see the difficulty. Press to hide it.")),
+                click = function()
+                    MTGRun.SetDifficultyHidden(ch.id,
+                        not MTGRun.IsDifficultyHidden(run, ch.id))
+                end,
+            } or nil,
         }
     end
 
     local metaLines = {}
     for _, entry in ipairs(ModuleFields(run, ch)) do
-        if dmhub.isDM and not adjudicated
+        --Hidden means hidden: the players' card does not carry the line at all,
+        --rather than showing it blanked.
+        local suppressed = entry.field.id == "difficulty"
+            and not director
+            and MTGRun.IsDifficultyHidden(run, ch.id)
+
+        if suppressed then
+            --nothing on this line
+        elseif dmhub.isDM and not adjudicated
             and entry.field.liveEditable == true
             and entry.field.type == "choice"
             and #(entry.field.options or {}) > 0 then

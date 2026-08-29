@@ -32,16 +32,21 @@ MTGRules.Register{
     --- @param challenges MTGChallengeDef[]
     --- @return MTGChallengeDef[]
     SortChallenges = function(run, challenges)
+        --Authored order is the array's own order, captured before sorting and
+        --used as the tiebreak. Rounds still come first: a later round rising
+        --above an earlier one would read as a bug, not a choice.
         local sorted = {}
-        for _, ch in ipairs(challenges) do
+        local authored = {}
+        for i, ch in ipairs(challenges) do
             sorted[#sorted + 1] = ch
+            authored[ch.id] = i
         end
         table.sort(sorted, function(a, b)
             local ra, rb = a.availableFromRound or 1, b.availableFromRound or 1
             if ra ~= rb then
                 return ra < rb
             end
-            return string.lower(a.name or "") < string.lower(b.name or "")
+            return (authored[a.id] or 0) < (authored[b.id] or 0)
         end)
         return sorted
     end,
@@ -122,6 +127,14 @@ MTGRules.Register{
     --- @return string[] labels tier 1-3, then the critical
     TierLabels = function(run, ch)
         local rules = MTGRules.GetOrDefault(run.moduleId)
+
+        --A hidden difficulty would be readable straight off the outcomes -- only
+        --Hard opens with a failure with a consequence -- so the roller gets the
+        --tiers unnamed rather than a wrong story.
+        if ch:try_get("difficultyHidden", false) == true then
+            return { "Tier 1", "Tier 2", "Tier 3" }
+        end
+
         local column = g_tiersByDifficulty[DifficultyOf(run, ch)]
             or g_tiersByDifficulty.medium
 

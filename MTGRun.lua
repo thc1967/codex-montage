@@ -209,12 +209,20 @@ end
 --- @param charid string
 --- @param included boolean
 function MTGRun.SetParticipantIncluded(charid, included)
-    MTGRun.Mutate("Change montage roster", function(run)
-        for _, p in ipairs(run.participants) do
-            if p.charid == charid then
-                p.included = included
-                return
-            end
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local participant = MTGRun.Participant(run, charid)
+    if participant == nil or participant.included == included then
+        return
+    end
+
+    MTGRun.Mutate("Change montage roster", function(r)
+        local p = MTGRun.Participant(r, charid)
+        if p ~= nil then
+            p.included = included
         end
     end)
 end
@@ -226,22 +234,98 @@ function MTGRun.IsChallengeIncluded(run, chid)
     return run:try_get("excludedChallenges", {})[chid] ~= true
 end
 
+--- Whether the table is being kept from seeing this Challenge. Seeded from the
+--- authored Definition when the Run copies it, then the Director's to change
+--- for the rest of the Run. Absent reads visible, so a montage authored before
+--- hiding existed needs nothing done to it.
+--- @param run MTGRun
+--- @param chid string
+--- @return boolean
+function MTGRun.IsChallengeHidden(run, chid)
+    for _, ch in ipairs(run:try_get("challenges", {})) do
+        if ch.id == chid then
+            return ch:try_get("hidden", false) == true
+        end
+    end
+    return false
+end
+
+--- Writes to the Run's own copy of the Challenge, so revealing something mid
+--- montage never edits the saved montage it came from.
+--- @param chid string
+--- @param hidden boolean
+function MTGRun.SetChallengeHidden(chid, hidden)
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.IsChallengeHidden(run, chid) == (hidden == true) then
+        return
+    end
+
+    MTGRun.Mutate(cond(hidden, "Hide challenge", "Reveal challenge"), function(r)
+        for _, ch in ipairs(r:try_get("challenges", {})) do
+            if ch.id == chid then
+                ch.hidden = hidden == true
+                return
+            end
+        end
+    end)
+end
+
+--- @param run MTGRun
+--- @param chid string
+--- @return boolean
+function MTGRun.IsDifficultyHidden(run, chid)
+    for _, ch in ipairs(run:try_get("challenges", {})) do
+        if ch.id == chid then
+            return ch:try_get("difficultyHidden", false) == true
+        end
+    end
+    return false
+end
+
+--- @param chid string
+--- @param hidden boolean
+function MTGRun.SetDifficultyHidden(chid, hidden)
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.IsDifficultyHidden(run, chid) == (hidden == true) then
+        return
+    end
+
+    MTGRun.Mutate(cond(hidden, "Hide difficulty", "Reveal difficulty"), function(r)
+        for _, ch in ipairs(r:try_get("challenges", {})) do
+            if ch.id == chid then
+                ch.difficultyHidden = hidden == true
+                return
+            end
+        end
+    end)
+end
+
 --- @param chid string
 --- @param included boolean
 function MTGRun.SetChallengeIncluded(chid, included)
-    MTGRun.Mutate("Change montage challenges", function(run)
-        if run:try_get("excludedChallenges") == nil then
-            run.excludedChallenges = {}
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.IsChallengeIncluded(run, chid) == (included == true) then
+        return
+    end
+
+    MTGRun.Mutate("Change montage challenges", function(r)
+        if r:try_get("excludedChallenges") == nil then
+            r.excludedChallenges = {}
         end
-        run.excludedChallenges[chid] = cond(included, nil, true)
+        r.excludedChallenges[chid] = cond(included, nil, true)
     end)
 end
 
 --- @param fieldId string
 --- @param value number
 function MTGRun.SetSetting(fieldId, value)
-    MTGRun.Mutate("Change montage setting", function(run)
-        run.settings[fieldId] = value
+    local run = MTGRun.Active()
+    if run == nil or run:try_get("settings", {})[fieldId] == value then
+        return
+    end
+
+    MTGRun.Mutate("Change montage setting", function(r)
+        r.settings[fieldId] = value
     end)
 end
 
@@ -312,8 +396,13 @@ end
 
 --- @param paused boolean
 function MTGRun.SetPaused(paused)
-    MTGRun.Mutate(cond(paused, "Pause montage", "Resume montage"), function(run)
-        run.paused = paused
+    local run = MTGRun.Active()
+    if run == nil or (run:try_get("paused", false) == true) == (paused == true) then
+        return
+    end
+
+    MTGRun.Mutate(cond(paused, "Pause montage", "Resume montage"), function(r)
+        r.paused = paused
     end)
 end
 
@@ -657,10 +746,34 @@ end
 --- @param fieldId string
 --- @param value any
 function MTGRun.SetChallengeField(challengeId, fieldId, value)
-    MTGRun.Mutate("Retune challenge", function(run)
-        for _, ch in ipairs(run:try_get("challenges", {})) do
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    --Read through try_get rather than FieldsFor: FieldsFor CREATES the bag it
+    --cannot find, which would mutate the document outside a change.
+    local target = nil
+    for _, ch in ipairs(run:try_get("challenges", {})) do
+        if ch.id == challengeId then
+            target = ch
+            break
+        end
+    end
+    if target == nil then
+        return
+    end
+
+    local bags = target:try_get("moduleFields")
+    local bag = bags ~= nil and bags[run.moduleId] or nil
+    if bag ~= nil and bag[fieldId] == value then
+        return
+    end
+
+    MTGRun.Mutate("Retune challenge", function(r)
+        for _, ch in ipairs(r:try_get("challenges", {})) do
             if ch.id == challengeId then
-                ch:FieldsFor(run.moduleId)[fieldId] = value
+                ch:FieldsFor(r.moduleId)[fieldId] = value
                 return
             end
         end
@@ -673,13 +786,26 @@ end
 --- @param slot string
 --- @param attrId string
 function MTGRun.SetAssignmentCharacteristic(instanceId, slot, attrId)
-    MTGRun.Mutate("Choose characteristic", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local inst = MTGRun.Instance(run, instanceId)
+    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
+        return
+    end
+    if inst[slot].attrId == attrId and inst[slot].attrOverridden == true then
+        return
+    end
+
+    MTGRun.Mutate("Choose characteristic", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i == nil or i[slot] == nil then
             return
         end
-        inst[slot].attrId = attrId
-        inst[slot].attrOverridden = true
+        i[slot].attrId = attrId
+        i[slot].attrOverridden = true
     end)
 end
 
@@ -687,12 +813,24 @@ end
 --- @param slot string
 --- @param skillId string "" for no skill, which is a valid choice
 function MTGRun.SetAssignmentSkill(instanceId, slot, skillId)
-    MTGRun.Mutate("Choose skill", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
-            return
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local inst = MTGRun.Instance(run, instanceId)
+    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
+        return
+    end
+    if inst[slot].skillId == skillId then
+        return
+    end
+
+    MTGRun.Mutate("Choose skill", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i ~= nil and i[slot] ~= nil then
+            i[slot].skillId = skillId
         end
-        inst[slot].skillId = skillId
     end)
 end
 
@@ -794,12 +932,14 @@ end
 --- Close the montage and freeze its report. The Run stays until the Director
 --- puts it away, so the table can sit with the result.
 function MTGRun.EndRun()
-    MTGRun.Mutate("End montage", function(run)
-        if run.status == MTGConstants.statusEnded then
-            return
-        end
-        run.ending = MTGRules.GetOrDefault(run.moduleId).BuildEnding(run)
-        run.status = MTGConstants.statusEnded
+    local run = MTGRun.Active()
+    if run == nil or run.status == MTGConstants.statusEnded then
+        return
+    end
+
+    MTGRun.Mutate("End montage", function(r)
+        r.ending = MTGRules.GetOrDefault(r.moduleId).BuildEnding(r)
+        r.status = MTGConstants.statusEnded
     end)
 end
 
@@ -902,20 +1042,42 @@ end
 
 --- @param degree table {id, label}
 function MTGRun.SetEndingDegree(degree)
-    MTGRun.Mutate("Set degree of success", function(run)
-        local ending = run:try_get("ending")
-        if ending ~= nil then
-            ending.degree = degree
+    local run = MTGRun.Active()
+    local ending = run ~= nil and run:try_get("ending") or nil
+    if ending == nil then
+        return
+    end
+
+    local current = ending.degree
+    if current ~= nil and degree ~= nil and current.id == degree.id then
+        return
+    end
+
+    MTGRun.Mutate("Set degree of success", function(r)
+        local e = r:try_get("ending")
+        if e ~= nil then
+            e.degree = degree
         end
     end)
 end
 
 --- @param victories number
 function MTGRun.SetEndingVictories(victories)
-    MTGRun.Mutate("Set Victory award", function(run)
-        local ending = run:try_get("ending")
-        if ending ~= nil then
-            ending.victories = math.max(0, math.floor(victories or 0))
+    local run = MTGRun.Active()
+    local ending = run ~= nil and run:try_get("ending") or nil
+    if ending == nil then
+        return
+    end
+
+    local value = math.max(0, math.floor(victories or 0))
+    if ending.victories == value then
+        return
+    end
+
+    MTGRun.Mutate("Set Victory award", function(r)
+        local e = r:try_get("ending")
+        if e ~= nil then
+            e.victories = value
         end
     end)
 end
@@ -925,10 +1087,16 @@ end
 --- happen while the ending screen is up.
 --- @param write boolean
 function MTGRun.SetEndingWriteJournal(write)
-    MTGRun.Mutate("Change montage journal", function(run)
-        local ending = run:try_get("ending")
-        if ending ~= nil then
-            ending.writeJournal = write == true
+    local run = MTGRun.Active()
+    local ending = run ~= nil and run:try_get("ending") or nil
+    if ending == nil or ending.writeJournal == (write == true) then
+        return
+    end
+
+    MTGRun.Mutate("Change montage journal", function(r)
+        local e = r:try_get("ending")
+        if e ~= nil then
+            e.writeJournal = write == true
         end
     end)
 end
@@ -970,6 +1138,11 @@ function MTGRun.AwardVictories()
         end
     end
 
+    local active = MTGRun.Active()
+    if active == nil or active:try_get("ending") == nil then
+        return
+    end
+
     MTGRun.Mutate("Award Victories", function(r)
         local e = r:try_get("ending")
         if e ~= nil then
@@ -994,10 +1167,22 @@ end
 --- @param instanceId string
 --- @param resolution table|nil nil takes the row out of resolution
 function MTGRun.SetResolution(instanceId, resolution)
-    MTGRun.Mutate("Montage roll", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst ~= nil then
-            inst.resolution = resolution
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local inst = MTGRun.Instance(run, instanceId)
+    --Clearing something already clear is the common case: Cancel and the Pump's
+    --lost-request path both fire it defensively.
+    if inst == nil or (inst.resolution == nil and resolution == nil) then
+        return
+    end
+
+    MTGRun.Mutate("Montage roll", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i ~= nil then
+            i.resolution = resolution
         end
     end)
 end
@@ -1006,13 +1191,18 @@ end
 --- @param slot string
 --- @param roll table {total, naturalRoll, boons, banes, tier}
 function MTGRun.RecordRoll(instanceId, slot, roll)
-    MTGRun.Mutate("Record montage roll", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil then
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.Instance(run, instanceId) == nil then
+        return
+    end
+
+    MTGRun.Mutate("Record montage roll", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i == nil then
             return
         end
-        inst[slot .. "Roll"] = roll
-        inst.resolution = nil
+        i[slot .. "Roll"] = roll
+        i.resolution = nil
     end)
 end
 
@@ -1021,7 +1211,18 @@ end
 --- module gets a fresh row in the same round to try again on.
 --- @param instanceId string
 --- @param outcome table {id, label, tone}
-function MTGRun.Adjudicate(instanceId, outcome)
+function MTGRun.Adjudicate(instanceId, outcome, alsoGrant)
+    local active = MTGRun.Active()
+    if active == nil then
+        return
+    end
+
+    local staged = MTGRun.Instance(active, instanceId)
+    if staged == nil or staged.adjudicatedInRound ~= nil
+        or MTGRun.ChallengeFor(active, staged) == nil then
+        return
+    end
+
     MTGRun.Mutate("Resolve montage test", function(run)
         local inst = MTGRun.Instance(run, instanceId)
         if inst == nil or inst.adjudicatedInRound ~= nil then
@@ -1031,6 +1232,12 @@ function MTGRun.Adjudicate(instanceId, outcome)
         local ch = MTGRun.ChallengeFor(run, inst)
         if ch == nil then
             return
+        end
+
+        --Folded in rather than left to a second change: a grant is one action
+        --to the Director, and two commits mean two rebuilds on every screen.
+        if alsoGrant then
+            inst.granted = true
         end
 
         local rules = MTGRules.GetOrDefault(run.moduleId)
@@ -1117,14 +1324,7 @@ function MTGRun.Grant(instanceId)
     end
 
     MTGRun.Adjudicate(instanceId,
-        MTGRules.GetOrDefault(run.moduleId).GrantedOutcome())
-
-    MTGRun.Mutate("Grant montage success", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i ~= nil then
-            i.granted = true
-        end
-    end)
+        MTGRules.GetOrDefault(run.moduleId).GrantedOutcome(), true)
 end
 
 --- Unwind a whole test -- granted or rolled, both slots -- back to the state
@@ -1132,15 +1332,20 @@ end
 --- their picks stay put; only what the test produced goes.
 --- @param instanceId string
 function MTGRun.UndoTest(instanceId)
-    MTGRun.Mutate("Undo montage test", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil then
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.Instance(run, instanceId) == nil then
+        return
+    end
+
+    MTGRun.Mutate("Undo montage test", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i == nil then
             return
         end
-        Unadjudicate(run, inst)
-        inst.granted = nil
-        inst.leadRoll = nil
-        inst.assistRoll = nil
+        Unadjudicate(r, i)
+        i.granted = nil
+        i.leadRoll = nil
+        i.assistRoll = nil
     end)
 end
 
@@ -1199,6 +1404,12 @@ end
 --- @param slot string
 --- @param charid string
 function MTGRun.Stage(instanceId, slot, charid)
+    local active = MTGRun.Active()
+    if active == nil
+        or not MTGRun.CanStage(active, MTGRun.Instance(active, instanceId), slot, charid) then
+        return
+    end
+
     MTGRun.Mutate("Place participant", function(run)
         local inst = MTGRun.Instance(run, instanceId)
         if not MTGRun.CanStage(run, inst, slot, charid) then
@@ -1230,13 +1441,23 @@ end
 --- @param instanceId string
 --- @param slot string
 function MTGRun.Unstage(instanceId, slot)
-    MTGRun.Mutate("Remove participant", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot .. "Roll"] ~= nil then
-            return
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+
+    local inst = MTGRun.Instance(run, instanceId)
+    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot .. "Roll"] ~= nil
+        or inst[slot] == nil then
+        return
+    end
+
+    MTGRun.Mutate("Remove participant", function(r)
+        local i = MTGRun.Instance(r, instanceId)
+        if i ~= nil then
+            i[slot] = nil
+            --A Lead leaving does not evict the Assist; the row simply waits.
         end
-        inst[slot] = nil
-        --A Lead leaving does not evict the Assist; the row simply waits.
     end)
 end
 

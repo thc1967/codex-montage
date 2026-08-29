@@ -242,9 +242,13 @@ function MTGRunPanel.Create(opts)
                             resultPanel:FireEvent("rebuild")
                         end)
                 end
+                --The reveal IS the card appearing: a hidden Challenge is absent
+                --from the players' board rather than shown greyed out.
                 for _, inst in ipairs(ordered) do
-                    bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded,
-                        director, m_pinned[inst.challengeId] == true)
+                    if director or not MTGRun.IsChallengeHidden(run, inst.challengeId) then
+                        bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded,
+                            director, m_pinned[inst.challengeId] == true)
+                    end
                 end
                 body.children = bodyChildren
 
