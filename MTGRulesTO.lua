@@ -278,6 +278,7 @@ MTGRules.Register{
             {
                 id = "threats",
                 label = "Threats Averted",
+                labelOne = "Threat Averted",
                 value = averted,
                 max = threats,
                 adjustable = false,
@@ -288,6 +289,7 @@ MTGRules.Register{
             {
                 id = "opportunities",
                 label = "Opportunities Seized",
+                labelOne = "Opportunity Seized",
                 value = seized,
                 max = opportunities,
                 adjustable = false,

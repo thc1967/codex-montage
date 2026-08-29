@@ -253,6 +253,29 @@ function MTGEndingPanel.CreateCelebration(payload)
         }
     end
 
+    --The tally the degree was judged on, small and under it: the degree says
+    --how it went, this says what it was scored from.
+    if #(payload.progress or {}) > 0 then
+        local parts = {}
+        for _, meter in ipairs(payload.progress) do
+            local value = meter.value or 0
+            parts[#parts + 1] = string.format("%d %s", value,
+                cond(value == 1, meter.labelOne or meter.label or "", meter.label or ""))
+        end
+
+        children[#children + 1] = gui.Label{
+            classes = { "sizeS", "fgMuted" },
+            interactable = false,
+            width = "100%",
+            height = "auto",
+            halign = "center",
+            valign = "top",
+            tmargin = 2,
+            textAlignment = "center",
+            text = table.concat(parts, "  |  "),
+        }
+    end
+
     children[#children + 1] = gui.Panel{
         interactable = false,
         width = "auto",
@@ -293,12 +316,13 @@ function MTGEndingPanel.CreateCelebration(payload)
         else
             lines[#lines + 1] = "Stood by"
         end
-        if #row.skills > 0 then
-            lines[#lines + 1] = table.concat(row.skills, ", ")
-        end
-        if row.bestTier ~= nil and row.bestChallenge ~= nil then
+        if row.bestTier ~= nil then
             lines[#lines + 1] = string.format("Best Tier %d", row.bestTier)
-            lines[#lines + 1] = row.bestChallenge
+        end
+        --Every Challenge they moved, not just the one their best roll landed
+        --on: an assist that handed over an edge counts as much here as a lead.
+        for _, name in ipairs(row.credits or {}) do
+            lines[#lines + 1] = name
         end
         cards[#cards + 1] = MTGWidgets.RecapCard(row, lines)
     end

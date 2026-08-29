@@ -241,7 +241,7 @@ local function RollSummary(run, inst, ch, slot, assignment, roll)
     local verdict
     if slot == "assist" then
         local grant = MTGResolver.AssistGrant(run, inst)
-        verdict = string.format("Gives a %s", string.gsub(grant or "bane", "_", " "))
+        verdict = string.format("Grants %s", string.gsub(grant or "bane", "_", " "))
     elseif inst.outcome ~= nil then
         verdict = inst.outcome.label
     else

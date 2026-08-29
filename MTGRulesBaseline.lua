@@ -256,6 +256,7 @@ MTGRules.Register{
             {
                 id = "successes",
                 label = "Successes",
+                labelOne = "Success",
                 value = progress.successes or 0,
                 max = MTGRun.Setting(run, "successLimit", 6),
                 adjustable = true,
@@ -264,6 +265,7 @@ MTGRules.Register{
             {
                 id = "failures",
                 label = "Failures",
+                labelOne = "Failure",
                 value = progress.failures or 0,
                 max = MTGRun.Setting(run, "failureLimit", 3),
                 adjustable = true,

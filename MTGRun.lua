@@ -711,15 +711,32 @@ function MTGRun.BuildRecap(run)
             name = p.name or "",
             led = 0,
             assisted = 0,
-            skills = {},
+            --Challenges this hero actually moved: led to something other than a
+            --failure, or assisted well enough to hand the Lead an edge. A lead
+            --that failed and an assist that only earned a bane are left off --
+            --this is the credit list, not the attendance sheet.
+            credits = {},
             bestTier = nil,
-            bestChallenge = nil,
         }
         byChar[p.charid] = row
         rows[#rows + 1] = row
     end
 
-    local seenSkill = {}
+    local rules = MTGRules.GetOrDefault(run.moduleId)
+    local seenCredit = {}
+
+    local function Credit(row, charid, ch)
+        local name = ch ~= nil and ch.name or nil
+        if name == nil or name == "" then
+            return
+        end
+        local key = charid .. "/" .. name
+        if seenCredit[key] then
+            return
+        end
+        seenCredit[key] = true
+        row.credits[#row.credits + 1] = name
+    end
 
     for _, inst in ipairs(run:try_get("instances", {})) do
         if inst.adjudicatedInRound ~= nil then
@@ -734,17 +751,26 @@ function MTGRun.BuildRecap(run)
                         local roll = inst.leadRoll
                         if roll ~= nil and (row.bestTier == nil or (roll.tier or 0) > row.bestTier) then
                             row.bestTier = roll.tier or 0
-                            row.bestChallenge = ch ~= nil and ch.name or nil
+                        end
+
+                        --Tone rather than the outcome id, so a module can name
+                        --its outcomes whatever it likes and still be read here.
+                        local outcome = inst.outcome or {}
+                        if outcome.tone ~= nil and outcome.tone ~= "danger" then
+                            Credit(row, a.charid, ch)
                         end
                     else
                         row.assisted = row.assisted + 1
-                    end
 
-                    if a.skillId ~= nil and a.skillId ~= "" then
-                        local key = a.charid .. "/" .. a.skillId
-                        if not seenSkill[key] then
-                            seenSkill[key] = true
-                            row.skills[#row.skills + 1] = MTGUtils.SkillName(a.skillId)
+                        --"Edge or better" asked of AssistGrant rather than of a
+                        --tier number, so it follows if the assist tiers are ever
+                        --retuned.
+                        local assistRoll = inst.assistRoll
+                        if assistRoll ~= nil then
+                            local grantId = rules.AssistGrant(assistRoll.tier or 1)
+                            if grantId ~= nil and grantId ~= "bane" then
+                                Credit(row, a.charid, ch)
+                            end
                         end
                     end
                 end
@@ -782,9 +808,25 @@ end
 --- @param run MTGRun
 --- @return table
 function MTGRun.BuildReportPayload(run)
+    --Taken from the module's own meters rather than reading progress directly,
+    --so a Draw Steel montage closes on Successes and Failures while T&O closes
+    --on Threats and Opportunities, with no branch here.
+    local progress = {}
+    for _, meter in ipairs(MTGRules.GetOrDefault(run.moduleId).DescribeProgress(run)) do
+        --Both forms travel: the meter's own label reads as a scale next to a
+        --ratio, but the closing line counts, and "1 Opportunities Seized" is
+        --not a sentence. The module knows its own singular.
+        progress[#progress + 1] = {
+            label = meter.label or "",
+            labelOne = meter.labelOne or meter.label or "",
+            value = meter.value or 0,
+        }
+    end
+
     return {
         name = run.name or "Montage",
         ending = DeepCopy(run:try_get("ending", {})),
+        progress = progress,
         recap = MTGRun.BuildRecap(run),
     }
 end

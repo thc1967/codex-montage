@@ -141,7 +141,24 @@ local function SendRequest(run, ch, assignment, grant, grantFrom, role)
     --answers with the outcomes for this Challenge's difficulty and T&O with its
     --own three, and the player reads the real stakes before rolling.
     local rules = MTGRules.GetOrDefault(run.moduleId)
-    local tiers = rules.TierLabels ~= nil and rules.TierLabels(run, ch) or nil
+
+    local tiers = nil
+    if role == "assist" then
+        --An assist never resolves the Challenge. It hands the Lead a grant and
+        --the tier picks which one, so the outcomes the module publishes are the
+        --wrong text entirely here. Read straight off AssistGrant, which is what
+        --the resolution then calls, and shared by every module through it.
+        --Three rows only: a critical buys nothing past the top tier.
+        tiers = {}
+        for tier = 1, 3 do
+            local grantId = rules.AssistGrant(tier)
+            tiers[tier] = string.format("The Lead rolls with %s %s",
+                cond(grantId == "edge", "an", "a"),
+                string.gsub(grantId, "_", " "))
+        end
+    elseif rules.TierLabels ~= nil then
+        tiers = rules.TierLabels(run, ch)
+    end
 
     local check = RollCheck.new{
         type = MTGConstants.rollCheckId,
