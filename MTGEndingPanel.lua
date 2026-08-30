@@ -83,7 +83,7 @@ function MTGEndingPanel.Create(opts)
         classes = { "sizeS" },
         width = 180,
         height = 22,
-        halign = "center",
+        halign = "left",
         valign = "center",
         text = "Write to journal",
         value = true,
@@ -93,22 +93,38 @@ function MTGEndingPanel.Create(opts)
         end,
     }
 
-    --The three cells the shell's footer takes. victoryInput and journalCheck
-    --stay locals so Complete can still read them from here.
+    --victoryInput and journalCheck stay locals so Complete can still read
+    --them from here.
     local victoryCell = gui.Panel{
-        width = "100%",
+        width = "auto",
         height = "auto",
         flow = "horizontal",
         halign = "left",
         valign = "center",
+        bmargin = 6,
 
         trophyIcon,
         victoryLabel,
         victoryInput,
     }
 
+    --These read the result rather than commit it, so they sit with the report
+    --between the degree picker and the tally, not down in the footer band.
+    local endingControls = gui.Panel{
+        classes = { cond(not director, "collapsed") },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        halign = "left",
+        valign = "top",
+        vmargin = 8,
+
+        victoryCell,
+        journalCheck,
+    }
+
     local completeButton = gui.Button{
-        classes = { "sizeS" },
+        classes = { "sizeL" },
         width = 100,
         text = "Complete",
         halign = "right",
@@ -189,9 +205,9 @@ function MTGEndingPanel.Create(opts)
 
         degreeLabel,
         degreeDropdown,
+        endingControls,
 
-        --Takes what the heading and the degree picker leave, so losing the
-        --victory row to the shell's footer gives the report that height back.
+        --Takes whatever the heading, the picker and the victory row leave.
         gui.Panel{
             width = "100%",
             height = "100% available",
@@ -206,8 +222,8 @@ function MTGEndingPanel.Create(opts)
     return {
         body = resultPanel,
         footer = {
-            { slot = cond(director, victoryCell) },
-            { slot = cond(director, journalCheck) },
+            {},
+            {},
             { slot = cond(director, completeButton) },
         },
     }

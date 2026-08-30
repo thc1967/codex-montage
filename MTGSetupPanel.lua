@@ -167,14 +167,6 @@ end
 --- footer, so this hands them out rather than mounting them itself.
 --- @return {body: Panel, footer: table[]} the pane and its footer cells
 function MTGSetupPanel.Create()
-    local titleLabel = gui.Label{
-        classes = { "tableLabel" },
-        width = "100%",
-        height = "auto",
-        valign = "top",
-        text = "Setup",
-    }
-
     local settingsPanel = gui.Panel{
         width = "100%",
         height = "auto",
@@ -215,8 +207,6 @@ function MTGSetupPanel.Create()
                 return
             end
 
-            titleLabel.text = string.format("Setup: %s", run.name or "Montage")
-
             local fields = {}
             for _, field in ipairs(MTGRules.GetOrDefault(run.moduleId).SettingsFields()) do
                 fields[#fields + 1] = SettingField(run, field)
@@ -236,7 +226,6 @@ function MTGSetupPanel.Create()
             element:FireEvent("rebuild")
         end,
 
-        titleLabel,
         settingsPanel,
 
         --Takes what the title and settings rows leave, so losing the button
@@ -279,7 +268,7 @@ function MTGSetupPanel.Create()
         footer = {
             {
                 slot = gui.Button{
-                    classes = { "sizeS" },
+                    classes = { "sizeL" },
                     text = "Cancel",
                     halign = "left",
                     valign = "center",
@@ -291,7 +280,7 @@ function MTGSetupPanel.Create()
             {},
             {
                 slot = gui.Button{
-                    classes = { "sizeS" },
+                    classes = { "sizeL" },
                     text = "Start",
                     halign = "right",
                     valign = "center",

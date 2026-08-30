@@ -15,7 +15,6 @@ MTGConstants.playerPanelTitle = "Montage Test"
 -- Window
 MTGConstants.windowWidth = 1220
 MTGConstants.windowHeight = 620
-MTGConstants.windowPad = 16
 MTGConstants.listWidth = 360
 MTGConstants.listRightMargin = 12
 
@@ -23,20 +22,12 @@ MTGConstants.listRightMargin = 12
 MTGConstants.playerWindowWidth = 800
 MTGConstants.playerWindowHeight = 600
 
--- Header: fixed band, divider floats under the heading so type prints over it
-MTGConstants.headerHeight = 40
-MTGConstants.headerDividerHeight = 12       -- weight of the rule, not spacing
-MTGConstants.headerDividerTopMargin = 22    -- where the rule crosses the band
-MTGConstants.headerTitleWidth = "25%"
-MTGConstants.headerTitleBottomMargin = -6   -- closes the line box's slack under the baseline
-MTGConstants.headerInfoWidth = "67%"
-MTGConstants.headerInfoRightMargin = 0      -- the launchable host owns the close control
-
--- Footer: fixed band, divider on top, controls in cells
-MTGConstants.footerHeight = 60
-MTGConstants.footerDividerMargin = 12
-MTGConstants.footerCellWidth = "33.3%"
-MTGConstants.footerCellsRun = {"50%", "50%"}  -- pause/reset/show, then next/end
+-- Footer cells. The band, its rule and the window's padding are the
+-- DialogShell's; only the split inside the band is ours. Whole percentages,
+-- as the shell takes them, and the middle cell carries the odd point so three
+-- of them sum to 100.
+MTGConstants.footerCells = {33, 34, 33}
+MTGConstants.footerCellsRun = {50, 50}  -- pause/reset/show, then next/end
 
 -- Run status
 MTGConstants.statusSetup = "setup"

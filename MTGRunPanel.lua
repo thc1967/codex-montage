@@ -29,25 +29,6 @@ function MTGRunPanel.Create(opts)
     --it in a body that is about to be replaced.
     local m_draft = nil
 
-    local titleLabel = gui.Label{
-        classes = { "tableLabel" },
-        width = "70%",
-        height = "auto",
-        halign = "left",
-        valign = "center",
-        text = "Running",
-    }
-
-    local statusLabel = gui.Label{
-        classes = { "sizeXs", "noBold", "fgMuted" },
-        width = "28%",
-        height = "auto",
-        halign = "right",
-        valign = "center",
-        textAlignment = "right",
-        text = "",
-    }
-
     local descriptionLabel = gui.Label{
         classes = { "sizeS", "noBold", "collapsed" },
         width = "100%",
@@ -262,7 +243,7 @@ function MTGRunPanel.Create(opts)
     --to mount these in, and a panel nothing parents is a leak the engine
     --complains about at creation.
     local pauseButton = director and gui.Button{
-        classes = { "sizeS" },
+        classes = { "sizeL" },
         text = "Pause",
         halign = "left",
         valign = "center",
@@ -282,7 +263,7 @@ function MTGRunPanel.Create(opts)
     } or nil
 
     local advanceButton = director and gui.Button{
-        classes = { "sizeS" },
+        classes = { "sizeL" },
         text = "Next Round",
         width = 100,
         halign = "right",
@@ -327,9 +308,6 @@ function MTGRunPanel.Create(opts)
                 summaryPanel.children = SummaryRows(run)
             end
 
-            titleLabel.text = run.name or "Montage"
-            statusLabel.text = string.format("%s  |  Round %d",
-                cond(run.paused == true, "PAUSED", "In play"), run.round or 1)
             if pauseButton ~= nil then
                 pauseButton.text = cond(run.paused == true, "Resume", "Pause")
             end
@@ -517,19 +495,6 @@ function MTGRunPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
-        --The player's window carries the name, state and round in its shell
-        --header instead, so this row is the Director's alone.
-        gui.Panel{
-            classes = { cond(not director, "collapsed") },
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            titleLabel,
-            statusLabel,
-        },
-
         descriptionLabel,
 
         metersPanel,
@@ -558,7 +523,7 @@ function MTGRunPanel.Create(opts)
         pauseButton,
 
         gui.Button{
-            classes = { "sizeS" },
+            classes = { "sizeL" },
             text = "Reset",
             halign = "left",
             valign = "center",
@@ -574,7 +539,7 @@ function MTGRunPanel.Create(opts)
         --players' screens, and re-presenting on our own would race the
         --thing that evicted it.
         gui.Button{
-            classes = { "sizeS" },
+            classes = { "sizeL" },
             width = 100,
             text = "Show Players",
             halign = "left",
@@ -596,7 +561,7 @@ function MTGRunPanel.Create(opts)
         advanceButton,
 
         gui.Button{
-            classes = { "sizeS" },
+            classes = { "sizeL" },
             text = "End",
             halign = "right",
             valign = "center",

@@ -1,9 +1,10 @@
 local mod = dmhub.GetModLoading()
 
---- The montage windows and the shell they wear: a fixed heading band with the
---- rule painted under the type, a working area taking what is left, and on the
---- Director's window a footer whose controls follow the run's status.
-MTGDialog = {}
+--- The montage windows. The frame they wear - heading band, working area and
+--- footer band - comes from DialogShell; what stays here is which pane the
+--- run's status calls for, and when a player's board has outlived the montage
+--- it was following.
+MTGDialog = RegisterGameType("MTGDialog")
 
 --- How many Montage windows this client has open. A board pushed to a player
 --- who already opened it from the Game menu must not toggle it shut.
@@ -14,78 +15,42 @@ function MTGDialog.IsOpen()
     return m_openWindows > 0
 end
 
---- The window's heading band. The rule is drawn first and floating so the
---- title paints over it rather than sitting above it.
---- @param args table reads title, headerInfo
---- @return Panel
-local function BuildHeader(args)
-    return gui.Panel{
-        width = "100%",
-        height = MTGConstants.headerHeight,
-        flow = "vertical",
-        halign = "left",
-        valign = "top",
+--- The run line both windows carry in their shell header: what the montage is,
+--- whether it is going, and how far in. Shared so the Director's window and the
+--- players' say it the same way, in the same place.
+--- @return string
+local function RunHeaderInfo()
+    local run = MTGRun.Active()
+    if run == nil then
+        return ""
+    end
 
-        gui.Panel{
-            floating = true,
-            width = "100%",
-            height = "auto",
-            flow = "vertical",
-            halign = "left",
-            valign = "top",
-            tmargin = MTGConstants.headerDividerTopMargin,
+    if run.status == MTGConstants.statusEnded then
+        return string.format("%s | Complete", run.name or "Montage")
+    end
 
-            gui.MCDMDivider{
-                width = "100%",
-                layout = "line",
-                height = MTGConstants.headerDividerHeight,
-            },
-        },
+    if run.status == MTGConstants.statusSetup then
+        return string.format("%s | Setup", run.name or "Montage")
+    end
 
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            halign = "left",
-            valign = "top",
+    if run.status ~= MTGConstants.statusRunning then
+        return ""
+    end
 
-            gui.Label{
-                classes = { "sizeXxl", "bold" },
-                width = MTGConstants.headerTitleWidth,
-                height = "auto",
-                halign = "left",
-                valign = "bottom",
-                bmargin = MTGConstants.headerTitleBottomMargin,
-                text = args.title,
-            },
-
-            gui.Label{
-                classes = { "sizeS", "noBold", "fgMuted" },
-                width = MTGConstants.headerInfoWidth,
-                height = "auto",
-                halign = "right",
-                rmargin = MTGConstants.headerInfoRightMargin,
-                valign = "bottom",
-                textAlignment = "right",
-                markdown = true,
-                textWrap = true,
-                text = args.headerInfo ~= nil and args.headerInfo() or "",
-                montageChanged = function(element)
-                    element.text = args.headerInfo ~= nil and args.headerInfo() or ""
-                end,
-            },
-        },
-    }
+    return string.format("%s | %s | Round %d",
+        run.name or "Montage",
+        cond(run:try_get("paused", false), "Paused", "In play"),
+        run.round or 1)
 end
 
 --- One cell of a footer. Cells are equal thirds unless a state asks for its
 --- own split, so contents land left, centre and right whichever a state fills.
 --- @param slot nil|Panel
---- @param width nil|string overrides the even third
+--- @param pct number cell width as a whole percentage
 --- @return Panel
-local function FooterCell(slot, width)
+local function FooterCell(slot, pct)
     return gui.Panel{
-        width = width or MTGConstants.footerCellWidth,
+        width = string.format("%d%%", pct),
         height = "100%",
         flow = "horizontal",
         valign = "center",
@@ -93,37 +58,31 @@ local function FooterCell(slot, width)
     }
 end
 
---- The band under the working area, and the rule above it.
+--- A state's row of controls. The band and the rule above it belong to the
+--- DialogShell; this is only what sits inside them.
 --- @param cells table[] {slot, width} in order
 --- @return Panel
 local function BuildFooter(cells)
     local row = {}
-    for _, cell in ipairs(cells or {}) do
-        row[#row + 1] = FooterCell(cell.slot, cell.width)
+
+    -- A band of its own width says so; anything else takes its share by
+    -- position, and an even split once past what the default names.
+    cells = cells or {}
+    local share = math.floor(100 / math.max(1, #cells))
+
+    for i, cell in ipairs(cells) do
+        row[#row + 1] = FooterCell(cell.slot,
+            cell.width or MTGConstants.footerCells[i] or share)
     end
 
     return gui.Panel{
         width = "100%",
-        height = MTGConstants.footerHeight,
-        flow = "vertical",
+        height = "100%",
+        flow = "horizontal",
         halign = "left",
-        valign = "bottom",
+        valign = "center",
 
-        gui.MCDMDivider{
-            width = "100%",
-            layout = "line",
-            vmargin = MTGConstants.footerDividerMargin,
-        },
-
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            halign = "left",
-            valign = "center",
-
-            children = row,
-        },
+        children = row,
     }
 end
 
@@ -199,18 +158,20 @@ function MTGDialog.Create()
         ending.body,
     }
 
+    local dlg
+
     --The launchable host owns this window's lifetime, so closing is a request
     --to the parent rather than a DestroySelf.
     local function Close()
-        if resultPanel ~= nil and resultPanel.valid and resultPanel.parent ~= nil then
-            resultPanel.parent:FireEvent("close")
+        if dlg ~= nil then
+            dlg:Close()
         end
     end
 
     --Nothing to run until a definition is selected and no other montage holds
     --the table. There is no readiness test beyond that.
     local runButton = gui.Button{
-        classes = { "sizeS", "disabled" },
+        classes = { "sizeL", "disabled" },
         text = "Run",
         halign = "right",
         valign = "center",
@@ -232,7 +193,7 @@ function MTGDialog.Create()
     local idleFooter = BuildFooter{
         {
             slot = gui.Button{
-                classes = { "sizeS" },
+                classes = { "sizeL" },
                 text = "Close",
                 halign = "left",
                 valign = "center",
@@ -247,14 +208,15 @@ function MTGDialog.Create()
     local runFooter = BuildFooter(run.footer)
     local endFooter = BuildFooter(ending.footer)
 
-    --Every state's band is built once and collapsed, the way the right pane's
-    --bodies are, so a swap never rebuilds a live control.
+    --Every state's row is built once and collapsed, the way the right pane's
+    --bodies are, so a swap never rebuilds a live control. That is also why the
+    --shell gets one full-width cell rather than having its own refilled.
     local footerPanel = gui.Panel{
         width = "100%",
-        height = MTGConstants.footerHeight,
+        height = "100%",
         flow = "none",
         halign = "left",
-        valign = "bottom",
+        valign = "center",
 
         montageChanged = function()
             local active = MTGRun.Active()
@@ -275,70 +237,54 @@ function MTGDialog.Create()
         endFooter,
     }
 
-    resultPanel = gui.Panel{
-        styles = ThemeEngine.GetStyles(),
-        classes = { "dialog" },
+    dlg = DialogShell.CreateNew{
+        classes = { "launchablePanel" },
+        title = MTGConstants.panelTitle,
+        subtitle = RunHeaderInfo(),
         width = MTGConstants.windowWidth,
         height = MTGConstants.windowHeight,
-        flow = "vertical",
-        halign = "center",
-        valign = "center",
-        pad = MTGConstants.windowPad,
+        footerCells = { 100 },
+        close = "host",
 
-        monitorGame = MTGRun.DocPath(),
-        refreshGame = function(element)
-            element:FireEventTree("montageChanged")
+        monitor = MTGRun.DocPath(),
+        refresh = function(shell)
+            shell:Root():FireEventTree("montageChanged")
+            shell:SetSubtitle(RunHeaderInfo())
         end,
 
-        create = function()
+        onCreate = function(shell)
             m_openWindows = m_openWindows + 1
+            shell:Root():FireEventTree("montageChanged")
         end,
 
-        destroy = function()
+        onDestroy = function()
             m_openWindows = math.max(0, m_openWindows - 1)
         end,
-
-        --Only once the montage is over: while it runs, the board carries its
-        --own title row and the two would say the same thing twice.
-        BuildHeader{
-            title = MTGConstants.panelTitle,
-            headerInfo = function()
-                local active = MTGRun.Active()
-                if active == nil or active.status ~= MTGConstants.statusEnded then
-                    return ""
-                end
-                return string.format("%s - Complete", active.name or "Montage")
-            end,
-        },
-
-        gui.Panel{
-            width = "100%",
-            height = "100% available",
-            flow = "horizontal",
-            valign = "top",
-
-            gui.Panel{
-                width = MTGConstants.listWidth,
-                height = "100%",
-                flow = "vertical",
-                valign = "top",
-                rmargin = MTGConstants.listRightMargin,
-                vscroll = true,
-
-                listPanel,
-            },
-
-            rightPane,
-        },
-
-        footerPanel,
     }
 
-    ThemeEngine.OnThemeChanged(mod, function()
-        if resultPanel ~= nil and resultPanel.valid then
-            resultPanel.styles = ThemeEngine.GetStyles()
-        end
-    end)
+    resultPanel = dlg:Root()
+
+    dlg:SetWorkingContent(gui.Panel{
+        width = "100%",
+        height = "100%",
+        flow = "horizontal",
+        valign = "top",
+
+        gui.Panel{
+            width = MTGConstants.listWidth,
+            height = "100%",
+            flow = "vertical",
+            valign = "top",
+            rmargin = MTGConstants.listRightMargin,
+            vscroll = true,
+
+            listPanel,
+        },
+
+        rightPane,
+    })
+
+    dlg:SetFooterContent("left", footerPanel)
 
     return resultPanel
 end
@@ -348,21 +294,6 @@ end
 --- @return Panel
 function MTGDialog.CreatePlayerView()
     --Name, play state and round, which the board used to carry itself.
-    local function HeaderInfo()
-        local run = MTGRun.Active()
-        if run == nil then
-            return ""
-        end
-
-        local state = "Running"
-        if run:try_get("paused", false) then
-            state = "Paused"
-        end
-
-        return string.format("%s - %s - Round %d",
-            run.name or "Montage", state, run.round or 1)
-    end
-
     --Nothing actionable in either: a player who opens the window while the
     --montage is paused, or with none running, can only read it and close it.
     local function Notice(message)
@@ -398,74 +329,65 @@ function MTGDialog.CreatePlayerView()
     local pausedBody = Notice("This montage is paused.")
     local idleBody = Notice("No montage is running.")
 
-    local resultPanel
-    resultPanel = gui.Panel{
-        styles = ThemeEngine.GetStyles(),
-        classes = { "mtgPlayerView" },
+    --Seeded from the state this window was built on, so one opened while the
+    --montage is paused stays put instead of closing on its first ping.
+    local sawLive = IsLive(MTGRun.Active())
+
+    --- Pause, Reset and Complete all end up here: a window that was showing a
+    --- live board and no longer has one takes itself off the table.
+    --- @param shell DialogShell
+    local function Apply(shell)
+        local run = MTGRun.Active()
+        local live = IsLive(run)
+
+        shell:SetSubtitle(RunHeaderInfo())
+
+        if sawLive and not live then
+            sawLive = false
+            shell:Close()
+            return
+        end
+
+        sawLive = live
+        board.body:SetClass("collapsed", not live)
+        pausedBody:SetClass("collapsed", live or run == nil)
+        idleBody:SetClass("collapsed", run ~= nil)
+    end
+
+    --mtgPlayerView is a marker, not a look: the celebration's Close button
+    --finds its host by it. The band and rule come from the shell.
+    local dlg = DialogShell.CreateNew{
+        classes = { "mtgPlayerView", "launchablePanel" },
+        title = MTGConstants.playerPanelTitle,
+        subtitle = RunHeaderInfo(),
         width = MTGConstants.playerWindowWidth,
         height = MTGConstants.playerWindowHeight,
-        flow = "vertical",
-        halign = "center",
-        valign = "center",
-        pad = MTGConstants.windowPad,
+        footerCells = false,
+        close = "host",
 
-        --Seeded from the state this window was built on, so one opened while
-        --the montage is paused stays put instead of closing on its first ping.
-        data = {
-            sawLive = IsLive(MTGRun.Active()),
-        },
-
-        monitorGame = MTGRun.DocPath(),
-        refreshGame = function(element)
-            element:FireEventTree("montageChanged")
+        monitor = MTGRun.DocPath(),
+        refresh = function(shell)
+            shell:Root():FireEventTree("montageChanged")
+            Apply(shell)
         end,
 
-        montageChanged = function(element)
-            local run = MTGRun.Active()
-            local live = IsLive(run)
-
-            --Pause, Reset and Complete all end up here: a window that was
-            --showing a live board and no longer has one takes itself off the
-            --table. The host owns the lifetime, so this asks rather than
-            --destroys.
-            if element.data.sawLive and not live then
-                element.data.sawLive = false
-                if element.parent ~= nil then
-                    element.parent:FireEvent("close")
-                end
-                return
-            end
-
-            element.data.sawLive = live
-            board.body:SetClass("collapsed", not live)
-            pausedBody:SetClass("collapsed", live or run == nil)
-            idleBody:SetClass("collapsed", run ~= nil)
-        end,
-
-        create = function(element)
+        onCreate = function(shell)
             m_openWindows = m_openWindows + 1
-            element:FireEvent("montageChanged")
+            Apply(shell)
         end,
 
-        destroy = function()
+        onDestroy = function()
             m_openWindows = math.max(0, m_openWindows - 1)
         end,
+    }
 
-        BuildHeader{
-            title = MTGConstants.playerPanelTitle,
-            headerInfo = HeaderInfo,
-        },
+    local resultPanel = dlg:Root()
 
+    dlg:SetWorkingContent{
         board.body,
         pausedBody,
         idleBody,
     }
-
-    ThemeEngine.OnThemeChanged(mod, function()
-        if resultPanel ~= nil and resultPanel.valid then
-            resultPanel.styles = ThemeEngine.GetStyles()
-        end
-    end)
 
     return resultPanel
 end
@@ -490,6 +412,27 @@ local function CreateCelebrationOverlay(report)
         --subtree, so the buttons below need this on.
         interactable = true,
 
+        --Not a DialogShell - no heading band, no footer, just a dimmed layer -
+        --so the theme subscription is held and dropped by hand here.
+        data = {
+            themeSub = nil,
+        },
+
+        create = function(element)
+            element.data.themeSub = ThemeEngine.OnThemeChanged(mod, function()
+                if element.valid then
+                    element.styles = ThemeEngine.GetStyles()
+                end
+            end)
+        end,
+
+        destroy = function(element)
+            if element.data.themeSub ~= nil then
+                element.data.themeSub:Deregister()
+                element.data.themeSub = nil
+            end
+        end,
+
         gui.Panel{
             interactable = false,
             width = "100%",
@@ -502,12 +445,6 @@ local function CreateCelebrationOverlay(report)
 
         MTGEndingPanel.CreateCelebration(report),
     }
-
-    ThemeEngine.OnThemeChanged(mod, function()
-        if resultPanel ~= nil and resultPanel.valid then
-            resultPanel.styles = ThemeEngine.GetStyles()
-        end
-    end)
 
     return resultPanel
 end
