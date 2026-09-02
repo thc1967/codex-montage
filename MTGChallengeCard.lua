@@ -551,17 +551,24 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
                 end,
             }
         else
+            --Only one roll goes out at a time: the resolver services the first
+            --resolving row and the summary dialog is one shared panel.
+            local busy = MTGRun.ResolvingInstance(run)
+            local blocked = busy ~= nil and busy.id ~= inst.id
+
             badges[#badges + 1] = gui.Button{
-                classes = { "sizeXs", cond(not ready, "disabled") },
+                classes = { "sizeXs", cond(ready and not blocked, nil, "disabled") },
                 icon = MTGConstants.iconRoll,
                 width = 22,
                 height = 22,
                 halign = "right",
                 valign = "center",
                 lmargin = 6,
-                hover = gui.Tooltip(cond(ready,
-                    "Request rolls",
-                    "Put a Hero in the Lead slot first")),
+                hover = gui.Tooltip(cond(blocked,
+                    "Another row's roll is out",
+                    cond(ready,
+                        "Request rolls",
+                        "Put a Hero in the Lead slot first"))),
                 click = function(element)
                     if element:HasClass("disabled") then
                         return

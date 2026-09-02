@@ -3,6 +3,14 @@ local mod = dmhub.GetModLoading()
 --- Asks a Participant's player for a test and harvests the result.
 MTGResolver = {}
 
+--- The Director's answer for the request now out, or nil. Client-local by
+--- nature: the resultTable belongs to their own summary dialog, and only their
+--- client harvests. A reload drops it, which Pump reads as the dialog never
+--- having been there and falls back to harvesting on completion.
+--- One value, not a table keyed by row: Trigger admits only one roll at a time.
+--- @type nil|{actionId: string, resultTable: table}
+local g_pending = nil
+
 --- The player-facing roll. Two independent axes meet here: `rollType` picks
 --- the dialog, while GetModifiers passes a type from the modifier pipeline's
 --- own closed vocabulary. A private id on that second axis silently drops
@@ -178,11 +186,26 @@ local function SendRequest(run, ch, assignment, grant, grantFrom, role)
         },
     }
 
-    return dmhub.SendActionRequest(RollRequest.new{
+    local actionId = dmhub.SendActionRequest(RollRequest.new{
         title = title,
         checks = { check },
         tokens = { [assignment.charid] = {} },
     })
+
+    --The Director gets the game's own roll summary over the board, which is
+    --what brings Re-roll and Take Roll to a montage test. Its Proceed is what
+    --accepts the roll, so the resultTable is kept rather than discarded: Pump
+    --waits on it instead of on the roll completing.
+    local hud = actionId ~= nil and GameHud.instance or nil
+    if hud then
+        local resultTable = {}
+        hud:ShowRollSummaryDialog(actionId, resultTable)
+        g_pending = { actionId = actionId, resultTable = resultTable }
+    else
+        g_pending = nil
+    end
+
+    return actionId
 end
 
 --- Ask for the next roll this row still needs: the Assist goes first, because
@@ -196,6 +219,16 @@ function MTGResolver.Trigger(instanceId)
 
     local inst = MTGRun.Instance(run, instanceId)
     if inst == nil or inst.adjudicatedInRound ~= nil or inst.lead == nil then
+        return
+    end
+
+    --One roll out at a time. Pump only ever services ResolvingInstance, which
+    --is the FIRST row holding a resolution, so a second request already sat
+    --unharvested until the first cleared; and the summary dialog is one shared
+    --panel, so a second would displace the first's and report itself
+    --cancelled, losing that roll. The card greys the other dice to match.
+    local busy = MTGRun.ResolvingInstance(run)
+    if busy ~= nil and busy.id ~= instanceId then
         return
     end
 
@@ -249,6 +282,10 @@ end
 --- @param instanceId string
 --- @param actionId string|nil
 function MTGResolver.Cancel(instanceId, actionId)
+    --Dropped before the request goes, so the dialog's dying `result = false`
+    --is never read back against a request that no longer exists.
+    g_pending = nil
+
     if actionId ~= nil then
         dmhub.CancelActionRequest(actionId)
     end
@@ -281,38 +318,82 @@ function MTGResolver.Pump()
         return
     end
 
-    local req = dmhub.GetPlayerActionRequest(res.actionId)
-
-    --A request cleared out from under us takes its roll with it. Treat that
-    --as never having asked: the Director presses the die again.
-    if req == nil then
-        MTGRun.SetResolution(inst.id, nil)
-        return
+    --Held before the request is read. Proceed cancels the request on its way
+    --out, so by the time this pump next runs the request is ALREADY GONE - and
+    --a missing request must not be read as an abandoned roll while an answer
+    --is waiting. That ordering is the whole reason this sits up here.
+    local answer = nil
+    if g_pending ~= nil and g_pending.actionId == res.actionId then
+        answer = g_pending.resultTable
     end
 
-    local info = req.info.tokens[res.actionFor]
+    local req = dmhub.GetPlayerActionRequest(res.actionId)
+    local info = req ~= nil and req.info.tokens[res.actionFor] or nil
     local status = info ~= nil and info.status or nil
 
+    --A player who dismissed their own roll takes the request down with them,
+    --which closes the summary dialog too.
     if status == "cancel" then
         MTGResolver.Cancel(inst.id, res.actionId)
         return
     end
 
-    if status ~= "complete" then
+    --Where the numbers come from, and whether it is time to take them. With a
+    --summary dialog up, the Director's Proceed is what accepts the roll: a
+    --completed roll sits there unrecorded so Re-roll and Take Roll still have
+    --a live request to act on, and so a roll about to be thrown away has not
+    --already moved the Run.
+    local tokenInfo = nil
+
+    if answer ~= nil then
+        --Still on the Director's desk.
+        if answer.result == nil then
+            return
+        end
+
+        g_pending = nil
+
+        --Cancelled while incomplete, or the dialog was dismissed. It dropped
+        --the request on its way out, so there is nothing left to cancel.
+        if answer.result ~= true or answer.action == nil then
+            MTGRun.SetResolution(inst.id, nil)
+            return
+        end
+
+        --Snapshotted before the dialog cancelled the request, which is what
+        --makes this safe to read now.
+        tokenInfo = answer.action.info.tokens[res.actionFor]
+    else
+        --No dialog: a reload took it, or there was no hud to show one. Harvest
+        --on completion, as this pump always did, and treat a request cleared
+        --out from under us as never having been asked.
+        if req == nil then
+            MTGRun.SetResolution(inst.id, nil)
+            return
+        end
+
+        if status ~= "complete" then
+            return
+        end
+
+        tokenInfo = info
+        dmhub.CancelActionRequest(res.actionId)
+    end
+
+    if tokenInfo == nil or tokenInfo.status ~= "complete" then
+        MTGRun.SetResolution(inst.id, nil)
         return
     end
 
     --Tier comes from the numbers the request carries, not from the total
     --alone: two edges bump the tier without moving it.
     local rollInfo = {
-        total = info.result,
-        naturalRoll = info.naturalRoll,
-        boons = info.boons,
-        banes = info.banes,
+        total = tokenInfo.result,
+        naturalRoll = tokenInfo.naturalRoll,
+        boons = tokenInfo.boons,
+        banes = tokenInfo.banes,
     }
     rollInfo.tier = RollUtils.DiceResultToTier(rollInfo)
-
-    dmhub.CancelActionRequest(res.actionId)
 
     local slot = res.slot or "lead"
     MTGRun.RecordRoll(inst.id, slot, rollInfo)
