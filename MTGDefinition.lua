@@ -11,6 +11,7 @@ local mod = dmhub.GetModLoading()
 --- @field availableFromRound number
 --- @field moduleFields table keyed by rules module id
 --- @field hidden boolean authored out of sight, for the Director to reveal
+--- @field outcomeShown boolean T&O only; whether the table reads the Outcome before it lands
 MTGChallengeDef = RegisterGameType("MTGChallengeDef")
 
 MTGChallengeDef.name = "New Challenge"
@@ -25,6 +26,13 @@ MTGChallengeDef.hidden = false
 --- Keeps the difficulty off the players' card and out of the roll they are
 --- asked for. Draw Steel only: T&O has no difficulty to hide.
 MTGChallengeDef.difficultyHidden = false
+
+--- Whether the T&O Outcome text is carried on the players' runtime card. Named
+--- for what lights the eye rather than for what hides it: the default is off,
+--- and an `outcomeHidden` twin would have to default TRUE to mean the same
+--- thing, which reads backwards as a type default. A landed Outcome shows
+--- regardless - see OutcomeRevealed in MTGChallengeCard.
+MTGChallengeDef.outcomeShown = false
 
 --- How many further attempts this Challenge allows. Stored as a count now;
 --- a legacy boolean true meant "always", which reads as the cap.

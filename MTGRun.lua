@@ -300,6 +300,38 @@ function MTGRun.SetDifficultyHidden(chid, hidden)
     end)
 end
 
+--- Whether the Director has opened this Challenge's T&O Outcome to the table.
+--- Says nothing about a landed Outcome, which shows either way.
+--- @param run MTGRun
+--- @param chid string
+--- @return boolean
+function MTGRun.IsOutcomeShown(run, chid)
+    for _, ch in ipairs(run:try_get("challenges", {})) do
+        if ch.id == chid then
+            return ch:try_get("outcomeShown", false) == true
+        end
+    end
+    return false
+end
+
+--- @param chid string
+--- @param shown boolean
+function MTGRun.SetOutcomeShown(chid, shown)
+    local run = MTGRun.Active()
+    if run == nil or MTGRun.IsOutcomeShown(run, chid) == (shown == true) then
+        return
+    end
+
+    MTGRun.Mutate(cond(shown, "Show outcome", "Hide outcome"), function(r)
+        for _, ch in ipairs(r:try_get("challenges", {})) do
+            if ch.id == chid then
+                ch.outcomeShown = shown == true
+                return
+            end
+        end
+    end)
+end
+
 --- @param chid string
 --- @param included boolean
 function MTGRun.SetChallengeIncluded(chid, included)

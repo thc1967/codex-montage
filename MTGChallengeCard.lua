@@ -440,6 +440,68 @@ local function ModuleFields(run, ch)
     return result
 end
 
+--- Whether the table may read this Challenge's T&O Outcome. The eye is the
+--- Director's standing answer; a Challenge whose Outcome has actually landed
+--- overrides it, because by then the party is living with the result.
+--- @param run MTGRun
+--- @param ch MTGChallengeDef
+--- @return boolean
+local function OutcomeRevealed(run, ch)
+    if MTGRun.IsOutcomeShown(run, ch.id) then
+        return true
+    end
+
+    --Still attemptable is still undecided, whichever way the last try went.
+    if MTGRun.AttemptsLeft(run, ch) > 0 then
+        return false
+    end
+
+    --Read the long way rather than through MTGRun.ChallengeModuleState, which
+    --CREATES its table on first access - a write a card render must not make.
+    local all = run:try_get("challengeModuleState") or {}
+    local resolved = (all[ch.id] or {}).resolved == true
+
+    --An Opportunity pays out when it is seized, a Threat when it is left
+    --standing. Same flag, opposite sense.
+    if ch:FieldsFor(run.moduleId).type == "opportunity" then
+        return resolved
+    end
+    return not resolved
+end
+
+--- The Director's live switch for the Outcome line on the players' card. The
+--- eye reports what was authored: once the Outcome has landed the table reads
+--- it either way, and the tooltip says so rather than lighting an eye nobody
+--- set.
+--- @param run MTGRun
+--- @param ch MTGChallengeDef
+--- @return Panel
+local function OutcomeEye(run, ch)
+    local shown = MTGRun.IsOutcomeShown(run, ch.id)
+    local landed = not shown and OutcomeRevealed(run, ch)
+
+    local tip = "Kept from the table until it lands. Press to show it now."
+    if landed then
+        tip = "This Outcome has landed, so the table reads it either way."
+    elseif shown then
+        tip = "The table can read this Outcome. Press to keep it back."
+    end
+
+    return gui.Button{
+        classes = { "sizeXs" },
+        icon = cond(shown, "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"),
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        rmargin = 6,
+        hover = gui.Tooltip(tip),
+        click = function()
+            MTGRun.SetOutcomeShown(ch.id, not shown)
+        end,
+    }
+end
+
 --- The heroes who rolled, small and in full colour. Unlike the slots, which
 --- grey a spent token out, this is a summary and wants to be readable.
 --- @param run MTGRun
@@ -711,15 +773,33 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
         }
     end
 
-    local function MetaLine(label, value)
-        return gui.Label{
+    --- @param trailing nil|Panel a control sitting against the label
+    local function MetaLine(label, value, trailing)
+        local text = gui.Label{
             classes = { "sizeS", "fgMuted" },
-            width = "100%",
+            width = cond(trailing == nil, "100%", "100%-22"),
             height = "auto",
             halign = "left",
             valign = "top",
             markdown = true,
             text = string.format("**%s:** %s", label, value),
+        }
+
+        if trailing == nil then
+            return text
+        end
+
+        --The control leads the line rather than following it. Label and value
+        --are one wrapping markdown label, so anything after it lands past the
+        --wrapped value at the far edge of the column instead of by the label.
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            trailing,
+            text,
         }
     end
 
@@ -777,11 +857,18 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
 
     local metaLines = {}
     for _, entry in ipairs(ModuleFields(run, ch)) do
+        --The moduleId test is belt and braces - only T&O publishes an
+        --`outcome` field - but it keeps OutcomeRevealed's read of `type` away
+        --from any module that has no such field.
+        local isOutcome = entry.field.id == "outcome"
+            and run.moduleId == MTGConstants.moduleTO
+
         --Hidden means hidden: the players' card does not carry the line at all,
         --rather than showing it blanked.
-        local suppressed = entry.field.id == "difficulty"
-            and not director
-            and MTGRun.IsDifficultyHidden(run, ch.id)
+        local suppressed = (entry.field.id == "difficulty"
+                and not director
+                and MTGRun.IsDifficultyHidden(run, ch.id))
+            or (isOutcome and not director and not OutcomeRevealed(run, ch))
 
         if suppressed then
             --nothing on this line
@@ -790,6 +877,9 @@ function MTGChallengeCard.Create(run, inst, expanded, director, forceOpen)
             and entry.field.type == "choice"
             and #(entry.field.options or {}) > 0 then
             metaLines[#metaLines + 1] = MetaChoice(entry)
+        elseif isOutcome and director then
+            metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value,
+                OutcomeEye(run, ch))
         else
             metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value)
         end

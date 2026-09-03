@@ -74,12 +74,28 @@ local function Stepper(opts)
     }
 end
 
-local function FormRow(labelText, width, control, hint)
+--- @param labelTrailing nil|Panel a control sitting to the right of the label
+local function FormRow(labelText, width, control, hint, labelTrailing)
+    local label = gui.Label{
+        classes = { "formStacked", "sizeS" },
+        --A themed formStacked label is 98% wide, which would push anything
+        --beside it to the far edge of the row instead of against the text.
+        width = cond(labelTrailing == nil, nil, "auto"),
+        text = labelText,
+    }
+
+    if labelTrailing ~= nil then
+        label = gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "center",
+            children = { label, labelTrailing },
+        }
+    end
+
     local children = {
-        gui.Label{
-            classes = { "formStacked", "sizeS" },
-            text = labelText,
-        },
+        label,
         control,
     }
 
@@ -247,6 +263,31 @@ local function ChallengeModuleField(store, ch, moduleId, field, hint)
         return FormRow(field.text, FIELD_WIDTH, control, hint)
     end
 
+    --The Outcome is the one authored line the table may be kept from: it names
+    --what a Threat costs or an Opportunity pays, which is the surprise. Off by
+    --default, and a landed Outcome shows regardless of this.
+    local labelTrailing = nil
+    if moduleId == MTGConstants.moduleTO and field.id == "outcome" then
+        local current = store.Read()
+        local shown = current ~= nil and current:try_get("outcomeShown", false) == true
+
+        labelTrailing = gui.Button{
+            classes = { "sizeXs" },
+            icon = cond(shown, "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"),
+            width = 16,
+            height = 16,
+            halign = "left",
+            valign = "center",
+            lmargin = 6,
+            hover = gui.Tooltip(cond(shown,
+                "The table can read this Outcome. Press to keep it back.",
+                "Kept from the table until it lands. Press to show it always.")),
+            click = function()
+                store.SetField("outcomeShown", not shown)
+            end,
+        }
+    end
+
     return FormRow(field.text, "60%", gui.Input{
         classes = { "formStacked", "sizeS" },
         text = tostring(value or ""),
@@ -254,7 +295,7 @@ local function ChallengeModuleField(store, ch, moduleId, field, hint)
         change = function(element)
             store.SetModuleField(field.id, element.text or "")
         end,
-    })
+    }, nil, labelTrailing)
 end
 
 --- Allowed characteristics. Ordered: a hero who ties across two of these
