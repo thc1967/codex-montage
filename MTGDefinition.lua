@@ -97,7 +97,12 @@ end
 --- @field moduleId string
 --- @field moduleSettings table
 --- @field challenges MTGChallengeDef[]
+--- @field slug string a name-derived key, unique across the library
 MTGDefinition = RegisterGameType("MTGDefinition")
+
+--- Declared on the type so a montage authored before slugs existed reads as ""
+--- rather than raising, which is what EnsureSlug backfills from.
+MTGDefinition.slug = ""
 
 MTGDefinition.name = "New Montage"
 MTGDefinition.image = ""
@@ -297,6 +302,57 @@ function MTGDefinition.GetByID(id)
     return Definitions()[id]
 end
 
+--- The readable half of a slug: lowercased, every run of non-alphanumerics
+--- collapsed to one dash, ends trimmed.
+--- @param name nil|string
+--- @return string
+local function Slugify(name)
+    local s = string.lower(trim(name or ""))
+    s = string.gsub(s, "[^%w]+", "-")
+    s = string.gsub(s, "^%-+", "")
+    s = string.gsub(s, "%-+$", "")
+    if s == "" then
+        s = "montage"
+    end
+    return s
+end
+
+--- This name's slug, disambiguated against every OTHER montage's. Takes the
+--- library table rather than reading it back, because it runs inside a
+--- mutation - and because the -2 suffix has to be settled against one view of
+--- the library. Derived at read time it would ride on pairs() order, and two
+--- montages sharing a name could swap suffixes between calls.
+--- @param defs table the whole library, mid-mutation
+--- @param id string the montage being named
+--- @param name nil|string
+--- @return string
+local function UniqueSlug(defs, id, name)
+    local base = Slugify(name)
+
+    local taken = {}
+    for otherId, def in pairs(defs) do
+        if otherId ~= id and type(def) == "table" then
+            local slug = def.slug
+            if type(slug) == "string" and slug ~= "" then
+                taken[slug] = true
+            end
+        end
+    end
+
+    if not taken[base] then
+        return base
+    end
+
+    local counter = 1
+    while true do
+        counter = counter + 1
+        local candidate = string.format("%s-%d", base, counter)
+        if not taken[candidate] then
+            return candidate
+        end
+    end
+end
+
 --- @param name nil|string
 --- @return string id
 function MTGDefinition.CreateInLibrary(name)
@@ -306,8 +362,48 @@ function MTGDefinition.CreateInLibrary(name)
     }
     MTGDefinition.Mutate("Create montage", function(defs)
         defs[def:GetID()] = def
+        def.slug = UniqueSlug(defs, def:GetID(), def.name)
     end)
     return def:GetID()
+end
+
+--- The montage carrying this slug, or nil.
+--- @param slug string
+--- @return MTGDefinition|nil
+function MTGDefinition.GetBySlug(slug)
+    if type(slug) ~= "string" or slug == "" then
+        return nil
+    end
+    for _, def in ipairs(MTGDefinition.GetAll()) do
+        if def.slug == slug then
+            return def
+        end
+    end
+    return nil
+end
+
+--- This montage's slug, stamping one first if it predates the field. Saves
+--- every caller having to cope with an empty string.
+--- @param id string
+--- @return string
+function MTGDefinition.EnsureSlug(id)
+    local def = MTGDefinition.GetByID(id)
+    if def == nil then
+        return ""
+    end
+    if def.slug ~= "" then
+        return def.slug
+    end
+
+    MTGDefinition.Mutate("Assign montage slug", function(defs)
+        local target = defs[id]
+        if target ~= nil and target.slug == "" then
+            target.slug = UniqueSlug(defs, id, target.name)
+        end
+    end)
+
+    local stamped = MTGDefinition.GetByID(id)
+    return stamped ~= nil and stamped.slug or ""
 end
 
 --- @param id string
@@ -322,6 +418,7 @@ function MTGDefinition.Duplicate(id)
     copy.name = string.format("%s (copy)", source.name or "Montage")
     MTGDefinition.Mutate("Duplicate montage", function(defs)
         defs[copy.id] = copy
+        copy.slug = UniqueSlug(defs, copy.id, copy.name)
     end)
     return copy.id
 end
@@ -344,6 +441,11 @@ function MTGDefinition.Rename(id, name)
         local def = defs[id]
         if def ~= nil and def.name ~= name then
             def.name = name
+
+            --The slug tracks the current name, so a rename re-derives it.
+            --Anything already holding the old slug stops resolving; that is
+            --the chosen behaviour, not an oversight.
+            def.slug = UniqueSlug(defs, id, name)
         end
     end)
 end
@@ -845,6 +947,7 @@ function MTGDefinition.ImportFromJson(text)
 
     MTGDefinition.Mutate("Import montage", function(defs)
         defs[def:GetID()] = def
+        def.slug = UniqueSlug(defs, def:GetID(), def.name)
     end)
 
     return { ok = true, defid = def:GetID(), name = name, messages = messages }

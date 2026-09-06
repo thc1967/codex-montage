@@ -10,9 +10,38 @@ MTGDialog = RegisterGameType("MTGDialog")
 --- who already opened it from the Game menu must not toggle it shut.
 local m_openWindows = 0
 
+--- The library list of the Director's open window, so something outside that
+--- window's closure can drive its selection.
+local m_listPanel = nil
+
 --- @return boolean
 function MTGDialog.IsOpen()
     return m_openWindows > 0
+end
+
+--- Raise the Director's window, selecting one montage if given.
+--- @param defid string|nil
+function MTGDialog.Open(defid)
+    --LaunchPanelByName toggles, so asking an already-open window to open would
+    --shut it.
+    if not MTGDialog.IsOpen() then
+        LaunchablePanel.LaunchPanelByName(MTGConstants.panelName)
+    end
+
+    if defid == nil then
+        return
+    end
+
+    --A window asked for on this frame has not built its list yet, so the
+    --selection waits a tick rather than firing into nothing.
+    dmhub.Schedule(0.01, function()
+        if mod.unloaded then
+            return
+        end
+        if m_listPanel ~= nil and m_listPanel.valid then
+            m_listPanel:FireEvent("select", defid)
+        end
+    end)
 end
 
 --- The run line both windows carry in their shell header: what the montage is,
@@ -126,6 +155,8 @@ function MTGDialog.Create()
         importPanel:FireEvent("reset")
         rightPane:FireEvent("rebuild")
     end)
+
+    m_listPanel = listPanel
 
     rightPane = gui.Panel{
         width = "100% available",
@@ -497,3 +528,46 @@ LaunchablePanel.Register{
         return MTGDialog.CreatePlayerView()
     end,
 }
+
+--Registered only for a Director, so a player has no such command and it never
+--reaches their completions.
+if dmhub.isDM then
+    Commands.RegisterMacro{
+        name = "thcmontage",
+        summary = "open the montage panel",
+        doc = "Usage: /thcmontage [slug]\nOpens the Montage panel. Given a slug, selects that montage.",
+
+        --Reads the stored slug rather than EnsureSlug: completions run per
+        --keystroke and must not write to the library.
+        completions = function(args, argIndex)
+            if argIndex ~= 1 then
+                return {}
+            end
+
+            local result = {}
+            for _, def in ipairs(MTGDefinition.GetAll()) do
+                if def.slug ~= "" then
+                    result[#result + 1] = { text = def.slug, summary = def.name or "" }
+                end
+            end
+            table.sort(result, function(a, b) return a.text < b.text end)
+            return result
+        end,
+
+        command = function(str)
+            local slug = trim(str or "")
+            local defid = nil
+
+            if slug ~= "" then
+                local def = MTGDefinition.GetBySlug(slug)
+                if def ~= nil then
+                    defid = def:GetID()
+                else
+                    dmhub.Log(string.format("thcmontage: no montage with slug \"%s\".", slug))
+                end
+            end
+
+            MTGDialog.Open(defid)
+        end,
+    }
+end

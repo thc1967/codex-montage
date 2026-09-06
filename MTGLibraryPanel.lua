@@ -156,6 +156,13 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
                     element.popup = gui.ContextMenu{
                         entries = {
                             {
+                                text = "Copy Slug",
+                                click = function()
+                                    element.popup = nil
+                                    dmhub.CopyToClipboard(MTGDefinition.EnsureSlug(defid))
+                                end,
+                            },
+                            {
                                 text = "Duplicate",
                                 click = function()
                                     element.popup = nil
