@@ -32,9 +32,6 @@ MTGRules.Register{
     --- @param challenges MTGChallengeDef[]
     --- @return MTGChallengeDef[]
     SortChallenges = function(run, challenges)
-        --Authored order is the array's own order, captured before sorting and
-        --used as the tiebreak. Rounds still come first: a later round rising
-        --above an earlier one would read as a bug, not a choice.
         local sorted = {}
         local authored = {}
         for i, ch in ipairs(challenges) do
@@ -128,9 +125,7 @@ MTGRules.Register{
     TierLabels = function(run, ch)
         local rules = MTGRules.GetOrDefault(run.moduleId)
 
-        --A hidden difficulty would be readable straight off the outcomes -- only
-        --Hard opens with a failure with a consequence -- so the roller gets the
-        --tiers unnamed rather than a wrong story.
+        --Named tiers would leak a hidden difficulty: only Hard opens on a consequence.
         if ch:try_get("difficultyHidden", false) == true then
             return { "Tier 1", "Tier 2", "Tier 3" }
         end
@@ -329,10 +324,6 @@ MTGRules.Register{
                 text = "Difficulty",
                 type = "choice",
                 default = "medium",
-                --The Director may retune this mid-Run, on any test that has not
-                --been adjudicated. A module opts a field in deliberately: most
-                --describe what a Challenge IS and have no business moving once
-                --the montage is on the table.
                 liveEditable = true,
                 options = {
                     { id = "easy", text = "Easy" },

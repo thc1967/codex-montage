@@ -11,23 +11,18 @@ function MTGRunPanel.Create(opts)
     opts = opts or {}
     local director = opts.director == true
 
-    --Expansion this client chose, by round and by challenge row. Absent means
-    --"follow the default": the current round is open, earlier ones folded, and
-    --a challenge folds once it has an outcome.
+    --Absent means "follow the default", so nil and false differ.
     local m_expanded = {}
     local m_cardExpanded = {}
 
-    --Challenges this board has already drawn. Seeded silently on the first
-    --build, so a board opened later sorts normally; anything that turns up
-    --after that is something the Director has just presented, and it floats to
-    --the top of its round until this client closes the board.
+    --Seeded silently on the first build so an existing board does not float everything.
     local m_seenChallenges = nil
     local m_pinned = {}
 
-    --The run-time challenge being authored. Director side only, and held as
-    --data rather than as a panel so a document refresh mid-edit cannot strand
-    --it in a body that is about to be replaced.
+    --Held as data, not a panel: a refresh mid-edit would strand the panel.
     local m_draft = nil
+
+    local m_description = nil
 
     local descriptionLabel = gui.Label{
         classes = { "sizeS", "noBold", "collapsed" },
@@ -50,16 +45,116 @@ function MTGRunPanel.Create(opts)
         vmargin = 8,
     }
 
-    --Only the current round ever has a tray, so one pinned above the board
-    --serves every round and never scrolls out from under a drag.
+    --The fold is this client's own; the document carries none of it.
+    local m_ladderOpen = false
+    local m_ladderText = {}
+
+    --The eye cannot be read back off the button.
+    local m_ladderEyeShown = nil
+
+    local ladderLines = {}
+    local ladderRungs = {}
+    for _, rung in ipairs(MTGConstants.ladderRungs) do
+        local line = gui.Label{
+            classes = { "sizeS", "fgMuted" },
+            width = "100%",
+            height = "auto",
+            halign = "left",
+            valign = "top",
+            tmargin = 2,
+            markdown = true,
+            textWrap = true,
+            text = "",
+        }
+        ladderLines[rung.id] = line
+        ladderRungs[#ladderRungs + 1] = line
+    end
+
+    local ladderBody = gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        children = ladderRungs,
+    }
+
+    local ladderArrow = gui.ExpandoArrow{
+        classes = { "bgFg" },
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        click = function(element)
+            m_ladderOpen = not element:HasClass("expanded")
+            element:SetClass("expanded", m_ladderOpen)
+            ladderBody:SetClass("collapsed", not m_ladderOpen)
+        end,
+    }
+
+    --Built bare: hover cannot be re-assigned, so the tooltip is patched.
+    local ladderEye = director and gui.Button{
+        classes = { "sizeXs" },
+        icon = "phosphor/eye-slash-duotone.png",
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        lmargin = 6,
+        click = function()
+            local run = MTGRun.Active()
+            if run ~= nil then
+                MTGRun.SetLadderShown(run:try_get("successLadderShown", false) ~= true)
+            end
+        end,
+    } or nil
+
+    local ladderPanel = gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        vmargin = 4,
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+
+            ladderArrow,
+
+            gui.Label{
+                classes = { "tableLabel", "sizeXs" },
+                width = "auto",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                lmargin = 4,
+                text = "Success Ladder",
+            },
+
+            ladderEye,
+        },
+
+        ladderBody,
+    }
+
+    --Pinned above the board so it never scrolls out from under a drag.
+    local tray = MTGWidgets.Tray(function(charid)
+        MTGRun.UnstageParticipant(charid)
+    end)
+
     local trayPanel = gui.Panel{
         width = "100%",
         height = "auto",
         flow = "vertical",
         valign = "top",
+
+        tray,
     }
 
-    --Stands where the tray does while the table waits on the Director.
     local finalizingLabel = gui.Label{
         classes = { "sizeL", "noBold", "fgMuted", "collapsed" },
         width = "100%",
@@ -115,27 +210,43 @@ function MTGRunPanel.Create(opts)
         }
     end
 
-    --- One test: everyone who worked it, what it was, and how it came out. The
-    --- badge is the module's own, so this reads the same as the board's rows.
-    --- @param run MTGRun
-    --- @param inst table
-    --- @param rules table the run's rules module
-    --- @return Panel|nil
-    local function SummaryRow(run, inst, rules)
-        local ch = MTGRun.ChallengeFor(run, inst)
-        if ch == nil then
-            return nil
-        end
+    --- One test: everyone who worked it, what it was, and how it came out.
+    --- Built once and handed a test with `setSummary`; handed nil, it
+    --- collapses. The badge is the module's own, so this reads the same as
+    --- the board's rows.
+    --- @return Panel
+    local function SummaryRow()
+        local shown = { tone = "bgFg" }
 
-        local tokens = {}
-        if inst.lead ~= nil then
-            tokens[#tokens + 1] = SummaryToken(inst.lead, true)
-        end
-        if inst.assist ~= nil then
-            tokens[#tokens + 1] = SummaryToken(inst.assist, false)
-        end
+        local tokens = gui.Panel{
+            width = 96,
+            height = "100%",
+            flow = "horizontal",
+            halign = "left",
+            valign = "center",
+            lmargin = 8,
+        }
 
-        local status = rules.ChallengeStatus(run, inst, ch)
+        local nameLabel = gui.Label{
+            classes = { "sizeM" },
+            width = "100% available",
+            height = "auto",
+            halign = "left",
+            valign = "center",
+            lmargin = 8,
+            textWrap = true,
+            text = "",
+        }
+
+        local badge = gui.Panel{
+            classes = { "bgFg" },
+            width = 20,
+            height = 20,
+            halign = "right",
+            valign = "center",
+            rmargin = 12,
+            bgimage = MTGConstants.iconPending,
+        }
 
         return gui.Panel{
             classes = { "row" },
@@ -145,48 +256,66 @@ function MTGRunPanel.Create(opts)
             halign = "left",
             valign = "top",
 
-            gui.Panel{
-                width = 96,
-                height = "100%",
-                flow = "horizontal",
-                halign = "left",
-                valign = "center",
-                lmargin = 8,
+            --- @param item nil|{run: MTGRun, inst: table, ch: MTGChallengeDef, rules: table}
+            setSummary = function(element, item)
+                element:SetClass("collapsed", item == nil)
+                if item == nil then
+                    return
+                end
 
-                children = tokens,
-            },
+                local entries = {}
+                if item.inst.lead ~= nil then
+                    entries[#entries + 1] = { p = item.inst.lead, lead = true }
+                end
+                if item.inst.assist ~= nil then
+                    entries[#entries + 1] = { p = item.inst.assist, lead = false }
+                end
+                MTGWidgets.BindList(tokens, entries, function()
+                    return MTGWidgets.Slot{
+                        setToken = function(slot, entry)
+                            local state = ""
+                            if entry ~= nil then
+                                state = entry.p.charid .. "|" .. tostring(entry.lead)
+                            end
+                            MTGWidgets.SetSlot(slot, state, function()
+                                return SummaryToken(entry.p, entry.lead)
+                            end)
+                        end,
+                    }
+                end, "setToken")
 
-            gui.Label{
-                classes = { "sizeM" },
-                width = "100% available",
-                height = "auto",
-                halign = "left",
-                valign = "center",
-                lmargin = 8,
-                textWrap = true,
-                text = ch.name or "",
-            },
+                local name = item.ch.name or ""
+                if shown.name ~= name then
+                    shown.name = name
+                    nameLabel.text = name
+                end
 
-            gui.Panel{
-                classes = { MTGWidgets.ToneClass(status.tone) },
-                width = 20,
-                height = 20,
-                halign = "right",
-                valign = "center",
-                rmargin = 12,
-                bgimage = status.icon,
-                hover = gui.Tooltip(status.tooltip or ""),
-            },
+                local status = item.rules.ChallengeStatus(item.run, item.inst, item.ch)
+                if shown.icon ~= status.icon then
+                    shown.icon = status.icon
+                    badge.bgimage = status.icon
+                end
+                shown.tone = MTGWidgets.SwapClass(badge, shown.tone, MTGWidgets.ToneClass(status.tone))
+                local tip = status.tooltip or ""
+                if shown.tip ~= tip then
+                    shown.tip = tip
+                    badge.tooltip = gui.Tooltip(tip)
+                end
+            end,
+
+            tokens,
+            nameLabel,
+            badge,
         }
     end
 
     --- Every test the table attempted, in the order the board showed them:
     --- round by round, and within a round the module's own sort.
     --- @param run MTGRun
-    --- @return Panel[]
-    local function SummaryRows(run)
+    --- @return table[] setSummary items
+    local function SummaryItems(run)
         local rules = MTGRules.GetOrDefault(run.moduleId)
-        local rows = {}
+        local items = {}
 
         for round = 1, run.round or 1 do
             local byChallenge = {}
@@ -201,22 +330,18 @@ function MTGRunPanel.Create(opts)
 
             for _, ch in ipairs(rules.SortChallenges(run, MTGRun.ActiveChallenges(run))) do
                 for _, inst in ipairs(byChallenge[ch.id] or {}) do
-                    --Attempted means resolved: an untouched Challenge has
-                    --nothing to report, and a hidden one was never on the
-                    --table's board to begin with.
+                    --Attempted means resolved; a hidden one was never on the table's board.
                     if inst.outcome ~= nil
                         and not MTGRun.IsChallengeHidden(run, inst.challengeId) then
-                        rows[#rows + 1] = SummaryRow(run, inst, rules)
+                        items[#items + 1] = { run = run, inst = inst, ch = ch, rules = rules }
                     end
                 end
             end
         end
 
-        return rows
+        return items
     end
 
-    --What the table reads once the Director ends the montage: every test they
-    --attempted, in board order, with who led and how it came out.
     local summaryPanel = gui.Panel{
         classes = { "collapsed" },
         width = "100%",
@@ -226,9 +351,7 @@ function MTGRunPanel.Create(opts)
         vscroll = true,
     }
 
-    --Takes whatever the rows above and the footer below leave, so the
-    --description growing costs the board height instead of pushing the footer
-    --off the bottom. Swaps with the summary once the montage is over.
+    --The description growing costs board height, not the footer.
     local boardScroll = gui.Panel{
         width = "100%",
         height = "100% available",
@@ -239,9 +362,7 @@ function MTGRunPanel.Create(opts)
         boardPanel,
     }
 
-    --Director-only, and built only for them: the player's board has no footer
-    --to mount these in, and a panel nothing parents is a leak the engine
-    --complains about at creation.
+    --Built only for the Director: an unparented panel is a leak the engine warns about.
     local pauseButton = director and gui.Button{
         classes = { "sizeL" },
         text = "Pause",
@@ -275,8 +396,143 @@ function MTGRunPanel.Create(opts)
     } or nil
 
     local resultPanel
-    --"available" is measured against the parent's CONTENT area, so this fits
-    --whether the host pads (the player's window) or not (the Director's pane).
+
+    --- One round's header over the body its cards go in. Built once for its
+    --- position, which is its round, and handed the round's rows with
+    --- `setRound`; handed nil, it collapses and waits for the round.
+    --- @param round number
+    --- @return Panel
+    local function BuildSection(round)
+        local cards = gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            valign = "top",
+        }
+
+        local draftSlot = MTGWidgets.Slot{ width = "100%" }
+
+        local body = gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            valign = "top",
+
+            draftSlot,
+            cards,
+        }
+
+        --No classes key: an empty list wipes ExpandoArrow's own theme classes.
+        local arrow = gui.ExpandoArrow{
+            width = 16,
+            height = 16,
+            halign = "left",
+            valign = "center",
+            click = function(element)
+                local nowExpanded = not element:HasClass("expanded")
+                element:SetClass("expanded", nowExpanded)
+                m_expanded[round] = nowExpanded
+                body:SetClass("collapsed", not nowExpanded)
+            end,
+        }
+
+        local headerChildren = {
+            arrow,
+
+            gui.Label{
+                classes = { "tableLabel", "sizeXs" },
+                width = "auto",
+                height = "auto",
+                halign = "left",
+                valign = "center",
+                lmargin = 4,
+                text = string.format("Round %d", round),
+            },
+        }
+
+        local addButton = nil
+        if director then
+            addButton = gui.Button{
+                classes = { "addButton", "sizeXs" },
+                halign = "right",
+                valign = "center",
+                --Clear of the board's scrollbar.
+                rmargin = 20,
+                hover = gui.Tooltip("Add a challenge"),
+                click = function()
+                    if m_draft ~= nil then
+                        return
+                    end
+                    m_draft = MTGChallengeDef.CreateNew{
+                        name = "",
+                        description = "",
+                        availableFromRound = round,
+                        repeatable = 0,
+                    }
+                    resultPanel:FireEvent("rebuild")
+                end,
+            }
+            headerChildren[#headerChildren + 1] = addButton
+        end
+
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            valign = "top",
+
+            --- @param entry nil|{run: MTGRun, isCurrent: boolean, items: table[]}
+            setRound = function(element, entry)
+                element:SetClass("collapsed", entry == nil)
+                if entry == nil then
+                    return
+                end
+
+                local run = entry.run
+
+                local expanded = m_expanded[round]
+                if expanded == nil then
+                    expanded = entry.isCurrent
+                end
+                arrow:SetClass("expanded", expanded)
+                body:SetClass("collapsed", not expanded)
+
+                if addButton ~= nil then
+                    addButton:SetClass("collapsed", not entry.isCurrent)
+                end
+
+                local draft = entry.isCurrent and m_draft or nil
+                MTGWidgets.SetSlot(draftSlot, cond(draft ~= nil, "draft", ""), function()
+                    return MTGEditorPanel.DraftCard(draft, run.moduleId,
+                        function(d)
+                            m_draft = nil
+                            MTGRun.AddChallengeAtRuntime(d)
+                        end,
+                        function()
+                            m_draft = nil
+                            resultPanel:FireEvent("rebuild")
+                        end)
+                end)
+
+                MTGWidgets.BindList(cards, entry.items, function()
+                    return MTGChallengeCard.Create(director, m_cardExpanded)
+                end, "setRow")
+            end,
+
+            gui.Panel{
+                width = "100%",
+                height = "auto",
+                flow = "horizontal",
+                valign = "top",
+                tmargin = 8,
+                children = headerChildren,
+            },
+
+            body,
+        }
+    end
+
+    --"available" measures the parent's CONTENT area, so it fits a padded host too.
     resultPanel = gui.Panel{
         width = "100%",
         height = "100% available",
@@ -294,18 +550,15 @@ function MTGRunPanel.Create(opts)
                 return
             end
 
-            --The table reads the summary once the montage is over; the
-            --Director keeps the board, since they are still working on it.
+            --The Director keeps the board after the end; they are still working on it.
             local reviewing = not director
                 and run.status == MTGConstants.statusEnded
             summaryPanel:SetClass("collapsed", not reviewing)
             boardScroll:SetClass("collapsed", reviewing)
-            --The tray is for staging heroes, which is over: the notice takes
-            --its place rather than leaving a gap.
             trayPanel:SetClass("collapsed", reviewing)
             finalizingLabel:SetClass("collapsed", not reviewing)
             if reviewing then
-                summaryPanel.children = SummaryRows(run)
+                MTGWidgets.BindList(summaryPanel, SummaryItems(run), SummaryRow, "setSummary")
             end
 
             if pauseButton ~= nil then
@@ -313,21 +566,51 @@ function MTGRunPanel.Create(opts)
             end
 
             local description = run:try_get("description", "")
-            descriptionLabel.text = description
-            descriptionLabel:SetClass("collapsed", description == "")
-
-            local meters = {}
-            for _, meter in ipairs(MTGRun.Meters()) do
-                meters[#meters + 1] = MTGWidgets.Meter(meter)
+            if m_description ~= description then
+                m_description = description
+                descriptionLabel.text = description
+                descriptionLabel:SetClass("collapsed", description == "")
             end
-            metersPanel.children = meters
+
+            MTGWidgets.BindList(metersPanel, MTGRun.Meters(), MTGWidgets.Meter, "setMeter")
+
+            --Re-asserted, not reset: a document write must not snap an opened ladder shut.
+            local showLadder = run.moduleId == MTGConstants.moduleBaseline
+                and (director or run:try_get("successLadderShown", false) == true)
+            ladderPanel:SetClass("collapsed", not showLadder)
+            ladderBody:SetClass("collapsed", not m_ladderOpen)
+            if showLadder then
+                for _, rung in ipairs(MTGConstants.ladderRungs) do
+                    local prose = MTGRun.LadderText(run, rung.id)
+                    local line = ladderLines[rung.id]
+
+                    --An unwritten rung is worth seeing on the Director's board, not the table's.
+                    line:SetClass("collapsed", prose == "" and not director)
+
+                    local text = string.format("**%s:** %s", rung.text,
+                        cond(prose == "", "Not set.", prose))
+                    if m_ladderText[rung.id] ~= text then
+                        m_ladderText[rung.id] = text
+                        line.text = text
+                    end
+                end
+
+                if ladderEye ~= nil then
+                    local shown = run:try_get("successLadderShown", false) == true
+                    if m_ladderEyeShown ~= shown then
+                        m_ladderEyeShown = shown
+                        ladderEye:FireEvent("setIcon", cond(shown,
+                            "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"))
+                        ladderEye.tooltip = gui.Tooltip(cond(shown,
+                            "The table can read the ladder. Press to keep it back.",
+                            "Kept from the table. Press to show it."))
+                    end
+                end
+            end
 
             local rules = MTGRules.GetOrDefault(run.moduleId)
-            local sections = {}
 
-            --Keyed by challenge rather than by instance: a round advance seeds
-            --a batch of new instances, and every one of them would otherwise
-            --look like something the Director had just added.
+            --Keyed by challenge: a round advance seeds instances that would all look new.
             if m_seenChallenges == nil then
                 m_seenChallenges = {}
                 for _, ch in ipairs(run:try_get("challenges", {})) do
@@ -337,14 +620,15 @@ function MTGRunPanel.Create(opts)
                 for _, ch in ipairs(run:try_get("challenges", {})) do
                     if not m_seenChallenges[ch.id] then
                         m_seenChallenges[ch.id] = true
-                        --One authored for a later round is just another
-                        --challenge when its round comes around.
+                        --One authored for a later round is not a mid-run addition.
                         if (ch.availableFromRound or 1) == (run.round or 1) then
                             m_pinned[ch.id] = true
                         end
                     end
                 end
             end
+
+            local sections = {}
 
             for round = 1, run.round or 1 do
                 local instances = MTGRun.InstancesForRound(run, round)
@@ -378,117 +662,36 @@ function MTGRunPanel.Create(opts)
                 end
                 ordered = floated
 
-                local isCurrent = round == (run.round or 1)
-                local expanded = m_expanded[round]
-                if expanded == nil then
-                    expanded = isCurrent
-                end
-
-                local body = gui.Panel{
-                    classes = { cond(not expanded, "collapsed") },
-                    width = "100%",
-                    height = "auto",
-                    flow = "vertical",
-                    valign = "top",
-                }
-
-                local bodyChildren = {}
-                if isCurrent and m_draft ~= nil then
-                    bodyChildren[#bodyChildren + 1] = MTGEditorPanel.DraftCard(m_draft, run.moduleId,
-                        function(draft)
-                            m_draft = nil
-                            MTGRun.AddChallengeAtRuntime(draft)
-                        end,
-                        function()
-                            m_draft = nil
-                            resultPanel:FireEvent("rebuild")
-                        end)
-                end
-                --The reveal IS the card appearing: a hidden Challenge is absent
-                --from the players' board rather than shown greyed out.
+                --A hidden Challenge is absent from the players' board, not greyed.
+                local items = {}
                 for _, inst in ipairs(ordered) do
                     if director or not MTGRun.IsChallengeHidden(run, inst.challengeId) then
-                        bodyChildren[#bodyChildren + 1] = MTGChallengeCard.Create(run, inst, m_cardExpanded,
-                            director, m_pinned[inst.challengeId] == true)
+                        items[#items + 1] = {
+                            run = run,
+                            inst = inst,
+                            pinned = m_pinned[inst.challengeId] == true,
+                        }
                     end
                 end
-                body.children = bodyChildren
 
-                --gui.CombineFields returns the new table wholesale when either
-                --side is empty, so an empty classes list wipes the arrow's own
-                --theme classes and it renders invisible.
-                local arrowArgs = {
-                    width = 16,
-                    height = 16,
-                    halign = "left",
-                    valign = "center",
+                sections[round] = {
+                    run = run,
+                    isCurrent = round == (run.round or 1),
+                    items = items,
                 }
-                if expanded then
-                    arrowArgs.classes = { "expanded" }
-                end
-
-                local thisRound = round
-                arrowArgs.click = function(element)
-                    local nowExpanded = not element:HasClass("expanded")
-                    element:SetClass("expanded", nowExpanded)
-                    m_expanded[thisRound] = nowExpanded
-                    body:SetClass("collapsed", not nowExpanded)
-                end
-                local headerChildren = {
-                    gui.ExpandoArrow(arrowArgs),
-
-                    gui.Label{
-                        classes = { "tableLabel", "sizeXs" },
-                        width = "auto",
-                        height = "auto",
-                        halign = "left",
-                        valign = "center",
-                        lmargin = 4,
-                        text = string.format("Round %d", round),
-                    },
-                }
-
-                if director and isCurrent then
-                    headerChildren[#headerChildren + 1] = gui.Button{
-                        classes = { "addButton", "sizeXs" },
-                        halign = "right",
-                        valign = "center",
-                        --Clear of the board's scrollbar.
-                        rmargin = 20,
-                        hover = gui.Tooltip("Add a challenge"),
-                        click = function()
-                            if m_draft ~= nil then
-                                return
-                            end
-                            m_draft = MTGChallengeDef.CreateNew{
-                                name = "",
-                                description = "",
-                                availableFromRound = run.round or 1,
-                                repeatable = 0,
-                            }
-                            resultPanel:FireEvent("rebuild")
-                        end,
-                    }
-                end
-
-                sections[#sections + 1] = gui.Panel{
-                    width = "100%",
-                    height = "auto",
-                    flow = "horizontal",
-                    valign = "top",
-                    tmargin = 8,
-                    children = headerChildren,
-                }
-                sections[#sections + 1] = body
             end
 
-            boardPanel.children = sections
+            MTGWidgets.BindList(boardPanel, sections, BuildSection, "setRound")
 
-            trayPanel.children = {
-                MTGWidgets.Tray(run, MTGRun.TrayParticipants(run, run.round or 1), function(charid)
-                    MTGRun.UnstageParticipant(charid)
-                end),
-            }
+            local free = MTGRun.TrayParticipants(run, run.round or 1)
+            local tokens = {}
+            for _, p in ipairs(free) do
+                tokens[#tokens + 1] = {
+                    p = p,
+                    dimmed = MTGRun.HasActedThisRound(run, p.charid),
+                }
+            end
+            tray:FireEvent("setTray", tokens)
         end,
 
         create = function(element)
@@ -498,6 +701,8 @@ function MTGRunPanel.Create(opts)
         descriptionLabel,
 
         metersPanel,
+
+        ladderPanel,
 
         trayPanel,
         finalizingLabel,
@@ -510,9 +715,7 @@ function MTGRunPanel.Create(opts)
         return { body = resultPanel }
     end
 
-    --Handed to the shell rather than mounted here: pauseButton and
-    --advanceButton stay locals so rebuild keeps updating them wherever they
-    --end up sitting.
+    --They stay locals so rebuild updates them wherever the shell mounts them.
     local leftGroup = gui.Panel{
         width = "100%",
         height = "auto",
@@ -535,9 +738,7 @@ function MTGRunPanel.Create(opts)
             end,
         },
 
-        --Anything else presented to the table evicts this board from the
-        --players' screens, and re-presenting on our own would race the
-        --thing that evicted it.
+        --Re-presenting automatically would race whatever evicted the board.
         gui.Button{
             classes = { "sizeL" },
             width = 100,

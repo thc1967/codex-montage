@@ -26,38 +26,89 @@ local function RulesIcon(moduleId)
     return ICON_CUSTOM
 end
 
---- @param def MTGDefinition
---- @param index number
---- @param selectedId string|nil
---- @param onSelect fun(defid: string)
---- @return Panel
-local function CreateRow(def, index, selectedId, onSelect, indent)
-    local defid = def:GetID()
-
-    --Exactly one Run exists at a time, so a montage is either the one running
-    --or it is locked out until that Run finishes.
+--- The play button's face for one montage: what it shows and whether it
+--- takes a press. Exactly one Run exists at a time, so a montage is either
+--- the one running or it is locked out until that Run finishes.
+--- @param defid string
+--- @return {icon: string, tooltip: string, interactable: boolean}
+local function PlayFace(defid)
     local running = MTGRun.ActiveFor(defid)
     local otherRunning = nil
     if running == nil and MTGRun.Active() ~= nil then
         otherRunning = MTGRun.Active()
     end
 
-    local playTooltip = "Run this montage"
+    local tooltip = "Run this montage"
     if otherRunning ~= nil then
-        playTooltip = string.format("%s is running. Finish or cancel it first.", otherRunning.name or "A montage")
+        tooltip = string.format("%s is running. Finish or cancel it first.", otherRunning.name or "A montage")
     elseif running ~= nil and running.status == MTGConstants.statusRunning then
-        playTooltip = cond(running.paused == true, "Resume this montage", "Pause this montage")
+        tooltip = cond(running.paused == true, "Resume this montage", "Pause this montage")
     elseif running ~= nil then
-        playTooltip = "Setting up"
+        tooltip = "Setting up"
     end
 
+    return {
+        icon = cond(running ~= nil and running.paused ~= true, ICON_PAUSE, ICON_PLAY),
+        tooltip = tooltip,
+        interactable = otherRunning == nil,
+    }
+end
+
+--- A montage's row. Built once and handed a montage with `setMontage`;
+--- handed nil, it collapses and waits. Stripe and selection are classes the
+--- bind toggles.
+--- @param onSelect fun(defid: string)
+--- @param indent number
+--- @return Panel
+local function CreateRow(onSelect, indent)
+    --- @type {defid: string|nil, name: string|nil, moduleId: string|nil, playIcon: string|nil, playTip: string|nil}
+    local bound = {}
+
+    local nameLabel = gui.Label{
+        classes = { "sizeS" },
+        width = "100% available",
+        height = "auto",
+        lmargin = 8,
+        halign = "left",
+        valign = "center",
+        text = "",
+    }
+
+    local rulesIcon = gui.Panel{
+        classes = { "bgFg" },
+        width = 20,
+        height = 20,
+        halign = "left",
+        valign = "center",
+        bgimage = ICON_BASELINE,
+    }
+
+    local playButton = gui.Button{
+        classes = { "sizeXs" },
+        icon = ICON_PLAY,
+        halign = "right",
+        valign = "center",
+        hmargin = 2,
+        click = function(element)
+            onSelect(bound.defid)
+            --Read live: the button outlives the refresh that dressed it.
+            local running = MTGRun.ActiveFor(bound.defid)
+            if running == nil then
+                MTGRun.BeginSetup(bound.defid)
+            elseif running.status == MTGConstants.statusRunning then
+                local paused = running.paused ~= true
+                MTGRun.SetPaused(paused)
+                if paused then
+                    MTGRun.HideFromPlayers()
+                else
+                    MTGRun.PresentToPlayers(element)
+                end
+            end
+        end,
+    }
+
     return gui.Panel{
-        classes = {
-            "row",
-            "hoverable",
-            cond(index % 2 == 1, "oddRow", "evenRow"),
-            cond(defid == selectedId, "selected"),
-        },
+        classes = { "row", "hoverable" },
         width = cond(indent > 0, string.format("100%%-%d", indent), "100%"),
         height = 32,
         flow = "horizontal",
@@ -82,38 +133,57 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
                 controller:FireEventTree("setDragging", false)
             end
             if target ~= nil then
-                MTGDefinition.SetFolder(defid, target.data.folderId or "")
+                MTGDefinition.SetFolder(bound.defid, target.data.folderId or "")
             end
         end,
 
         click = function()
-            onSelect(defid)
+            onSelect(bound.defid)
         end,
 
-        --Takes everything the rules icon and the controls leave, so a name has
-        --the room and the icon sits over against them on the right.
-        gui.Label{
-            classes = { "sizeS" },
-            width = "100% available",
-            height = "auto",
-            lmargin = 8,
-            halign = "left",
-            valign = "center",
-            text = def.name or "",
-        },
+        --- @param item nil|{def: MTGDefinition, index: number, selected: boolean}
+        setMontage = function(element, item)
+            element:SetClass("collapsed", item == nil)
+            if item == nil then
+                return
+            end
 
-        gui.Panel{
-            classes = { "bgFg" },
-            width = 20,
-            height = 20,
-            halign = "left",
-            valign = "center",
-            bgimage = RulesIcon(def.moduleId),
-            hover = gui.Tooltip(MTGRules.Name(def.moduleId)),
-        },
+            local def = item.def
+            bound.defid = def:GetID()
 
-        --Sized to the two buttons rather than a share of the row, so the name
-        --gets back what a fixed share was over-reserving.
+            element:SetClass("oddRow", item.index % 2 == 1)
+            element:SetClass("evenRow", item.index % 2 == 0)
+            element:SetClass("selected", item.selected)
+
+            local name = def.name or ""
+            if bound.name ~= name then
+                bound.name = name
+                nameLabel.text = name
+            end
+
+            if bound.moduleId ~= def.moduleId then
+                bound.moduleId = def.moduleId
+                rulesIcon.bgimage = RulesIcon(def.moduleId)
+                rulesIcon.tooltip = gui.Tooltip(MTGRules.Name(def.moduleId))
+            end
+
+            local face = PlayFace(bound.defid)
+            if bound.playIcon ~= face.icon then
+                bound.playIcon = face.icon
+                playButton:FireEvent("setIcon", face.icon)
+            end
+            if bound.playTip ~= face.tooltip then
+                bound.playTip = face.tooltip
+                playButton.tooltip = gui.Tooltip(face.tooltip)
+            end
+            if playButton.interactable ~= face.interactable then
+                playButton.interactable = face.interactable
+            end
+        end,
+
+        nameLabel,
+        rulesIcon,
+
         gui.Panel{
             width = "auto",
             height = "100%",
@@ -121,29 +191,7 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
             halign = "right",
             valign = "center",
 
-            gui.Button{
-                classes = { "sizeXs" },
-                icon = cond(running ~= nil and running.paused ~= true, ICON_PAUSE, ICON_PLAY),
-                halign = "right",
-                valign = "center",
-                hmargin = 2,
-                interactable = otherRunning == nil,
-                hover = gui.Tooltip(playTooltip),
-                click = function(element)
-                    onSelect(defid)
-                    if running == nil then
-                        MTGRun.BeginSetup(defid)
-                    elseif running.status == MTGConstants.statusRunning then
-                        local paused = running.paused ~= true
-                        MTGRun.SetPaused(paused)
-                        if paused then
-                            MTGRun.HideFromPlayers()
-                        else
-                            MTGRun.PresentToPlayers(element)
-                        end
-                    end
-                end,
-            },
+            playButton,
 
             gui.Button{
                 classes = { "sizeXs" },
@@ -153,6 +201,7 @@ local function CreateRow(def, index, selectedId, onSelect, indent)
                 hmargin = 2,
                 hover = gui.Tooltip("More"),
                 click = function(element)
+                    local defid = bound.defid
                     element.popup = gui.ContextMenu{
                         entries = {
                             {
@@ -216,42 +265,48 @@ local function CreateRootDropRow()
     }
 end
 
---- A folder's header: its name, how many montages it holds, and the drop
---- target that files them into it.
+--- Collapse is a view preference, so it lives per client rather than in the
+--- shared document where it would follow everyone around.
 --- @param folderId string
---- @param label string
---- @param onRebuild fun()
---- @param count number
---- @return Panel
-local function CreateFolderHeader(folderId, label, onRebuild, count)
-    --Collapse is a view preference, so it lives per client rather than in the
-    --shared document where it would follow everyone around.
-    local prefKey = string.format("mtgfolder:%s:%s", dmhub.gameid, folderId)
-    local closed = dmhub.GetPref(prefKey) == true
+--- @return string
+local function FoldPrefKey(folderId)
+    return string.format("mtgfolder:%s:%s", dmhub.gameid, folderId)
+end
 
-    local arrowArgs = {
+--- A folder: its header, with its name, how many montages it holds and the
+--- drop target that files them into it, over the rows of those montages.
+--- Built once and handed a folder with `setFolder`; handed nil, it collapses.
+--- @param onSelect fun(defid: string)
+--- @param onRebuild fun()
+--- @return Panel
+local function CreateFolderBlock(onSelect, onRebuild)
+    --- @type {folderId: string|nil, label: string|nil, count: string|nil}
+    local bound = {}
+
+    local rows = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+    }
+
+    --No classes key: an empty list wipes ExpandoArrow's own theme classes.
+    local arrow = gui.ExpandoArrow{
         bgimage = CARET,
         width = 14,
         height = 14,
         halign = "left",
         valign = "center",
         lmargin = 4,
-    }
-    if not closed then
-        arrowArgs.classes = { "expanded" }
-    end
-    arrowArgs.click = function(element)
-        local nowExpanded = not element:HasClass("expanded")
-        element:SetClass("expanded", nowExpanded)
-        dmhub.SetPref(prefKey, not nowExpanded)
-        onRebuild()
-    end
-
-    local children = {
-        gui.ExpandoArrow(arrowArgs),
+        click = function(element)
+            local nowExpanded = not element:HasClass("expanded")
+            element:SetClass("expanded", nowExpanded)
+            dmhub.SetPref(FoldPrefKey(bound.folderId), not nowExpanded)
+            onRebuild()
+        end,
     }
 
-    children[#children + 1] = gui.Label{
+    local nameLabel = gui.Label{
         classes = { "tableLabel", "sizeXs" },
         width = "70%",
         height = "auto",
@@ -260,28 +315,28 @@ local function CreateFolderHeader(folderId, label, onRebuild, count)
         lmargin = 4,
         editable = true,
         characterLimit = 32,
-        text = label,
+        text = "",
         change = function(element)
             local name = trim(element.text or "")
             if name == "" then
-                element.text = label
+                element.text = bound.label or ""
                 return
             end
-            MTGDefinition.RenameFolder(folderId, name)
+            MTGDefinition.RenameFolder(bound.folderId, name)
         end,
     }
 
-    children[#children + 1] = gui.Label{
+    local countLabel = gui.Label{
         classes = { "sizeXs", "noBold", "fgMuted" },
         width = "auto",
         height = "auto",
         halign = "right",
         valign = "center",
         rmargin = 8,
-        text = tostring(count),
+        text = "",
     }
 
-    return gui.Panel{
+    local header = gui.Panel{
         classes = { DROP_CLASS },
         width = "100%",
         height = 26,
@@ -291,7 +346,7 @@ local function CreateFolderHeader(folderId, label, onRebuild, count)
         bgimage = "panels/square.png",
         dragTarget = true,
 
-        data = { folderId = folderId },
+        data = { folderId = "" },
 
         rightClick = function(element)
             element.popup = gui.ContextMenu{
@@ -300,14 +355,53 @@ local function CreateFolderHeader(folderId, label, onRebuild, count)
                         text = "Delete Folder",
                         click = function()
                             element.popup = nil
-                            MTGDefinition.DeleteFolder(folderId)
+                            MTGDefinition.DeleteFolder(bound.folderId)
                         end,
                     },
                 },
             }
         end,
 
-        children = children,
+        arrow,
+        nameLabel,
+        countLabel,
+    }
+
+    return gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        --- @param entry nil|{folder: {id: string, name: string}, items: table[], closed: boolean}
+        setFolder = function(element, entry)
+            element:SetClass("collapsed", entry == nil)
+            if entry == nil then
+                return
+            end
+
+            bound.folderId = entry.folder.id
+            header.data.folderId = entry.folder.id
+
+            if bound.label ~= entry.folder.name then
+                bound.label = entry.folder.name
+                nameLabel.text = entry.folder.name
+            end
+            local count = tostring(#entry.items)
+            if bound.count ~= count then
+                bound.count = count
+                countLabel.text = count
+            end
+
+            arrow:SetClass("expanded", not entry.closed)
+            rows:SetClass("collapsed", entry.closed)
+            MTGWidgets.BindList(rows, entry.items, function()
+                return CreateRow(onSelect, 16)
+            end, "setMontage")
+        end,
+
+        header,
+        rows,
     }
 end
 
@@ -318,6 +412,20 @@ end
 function MTGLibraryPanel.Create(onSelect, onImport)
     local m_selected = nil
 
+    local rootRows = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+    }
+
+    local folderBlocks = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+    }
+
     local listPanel = gui.Panel{
         classes = { "bordered" },
         pad = 4,
@@ -326,6 +434,10 @@ function MTGLibraryPanel.Create(onSelect, onImport)
         flow = "vertical",
         valign = "top",
         vscroll = true,
+
+        CreateRootDropRow(),
+        rootRows,
+        folderBlocks,
     }
 
     local emptyLabel = gui.Label{
@@ -360,8 +472,6 @@ function MTGLibraryPanel.Create(onSelect, onImport)
         rebuild = function(element)
             local defs = MTGDefinition.GetAll()
 
-            --The selection can vanish under us when a montage is deleted here
-            --or on another client.
             if m_selected ~= nil and MTGDefinition.GetByID(m_selected) == nil then
                 m_selected = nil
                 onSelect(nil)
@@ -382,31 +492,40 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                 bucket[#bucket + 1] = def
             end
 
-            local children = {}
+            --Only visible rows take a stripe; folded ones stay bound for the unfold.
             local index = 0
-
-            local function AddRows(bucket, indent)
+            local function Items(bucket, visible)
+                local items = {}
                 for _, def in ipairs(bucket or {}) do
-                    index = index + 1
-                    children[#children + 1] = CreateRow(def, index, m_selected, Select, indent)
+                    if visible then
+                        index = index + 1
+                    end
+                    items[#items + 1] = {
+                        def = def,
+                        index = index,
+                        selected = def:GetID() == m_selected,
+                    }
                 end
+                return items
             end
 
-            children[#children + 1] = CreateRootDropRow()
-            AddRows(byFolder[""], 0)
+            MTGWidgets.BindList(rootRows, Items(byFolder[""], true), function()
+                return CreateRow(Select, 0)
+            end, "setMontage")
 
+            local folders = {}
             for _, folder in ipairs(MTGDefinition.GetFolders()) do
-                local bucket = byFolder[folder.id] or {}
-                children[#children + 1] =
-                    CreateFolderHeader(folder.id, folder.name, Rebuild, #bucket)
-
-                local prefKey = string.format("mtgfolder:%s:%s", dmhub.gameid, folder.id)
-                if dmhub.GetPref(prefKey) ~= true then
-                    AddRows(bucket, 16)
-                end
+                local closed = dmhub.GetPref(FoldPrefKey(folder.id)) == true
+                folders[#folders + 1] = {
+                    folder = folder,
+                    closed = closed,
+                    items = Items(byFolder[folder.id], not closed),
+                }
             end
+            MTGWidgets.BindList(folderBlocks, folders, function()
+                return CreateFolderBlock(Select, Rebuild)
+            end, "setFolder")
 
-            listPanel.children = children
             emptyLabel:SetClass("collapsed", #defs > 0)
         end,
 
@@ -414,8 +533,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
             element:FireEvent("rebuild")
         end,
 
-        --Rows show run state as well as definition state, and a panel can
-        --only monitor one path.
+        --A panel monitors one path; rows need the Run's too.
         gui.Panel{
             width = 0,
             height = 0,

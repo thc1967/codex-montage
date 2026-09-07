@@ -22,8 +22,7 @@ end
 --- Raise the Director's window, selecting one montage if given.
 --- @param defid string|nil
 function MTGDialog.Open(defid)
-    --LaunchPanelByName toggles, so asking an already-open window to open would
-    --shut it.
+    --LaunchPanelByName toggles, so opening an open window would shut it.
     if not MTGDialog.IsOpen() then
         LaunchablePanel.LaunchPanelByName(MTGConstants.panelName)
     end
@@ -32,8 +31,7 @@ function MTGDialog.Open(defid)
         return
     end
 
-    --A window asked for on this frame has not built its list yet, so the
-    --selection waits a tick rather than firing into nothing.
+    --The list is not built this frame, so the selection waits a tick.
     dmhub.Schedule(0.01, function()
         if mod.unloaded then
             return
@@ -94,8 +92,6 @@ end
 local function BuildFooter(cells)
     local row = {}
 
-    -- A band of its own width says so; anything else takes its share by
-    -- position, and an even split once past what the default names.
     cells = cells or {}
     local share = math.floor(100 / math.max(1, #cells))
 
@@ -125,8 +121,6 @@ function MTGDialog.Create()
     local run = MTGRunPanel.Create{ director = true }
     local ending = MTGEndingPanel.Create{ director = true }
 
-    --Import takes the pane rather than opening a dialog of its own, so it is
-    --a sibling of the editor rather than a layer over it.
     local m_importing = false
     local rightPane
     local importPanel = MTGImportPanel.Create(function(defid)
@@ -137,8 +131,7 @@ function MTGDialog.Create()
         end
     end)
 
-    --What Run acts on. The editor keeps its own copy privately, so the
-    --selection is tracked here rather than read back out of it.
+    --The editor keeps its selection privately, so track it here too.
     local m_selectedDefid = nil
     local resultPanel
 
@@ -191,16 +184,13 @@ function MTGDialog.Create()
 
     local dlg
 
-    --The launchable host owns this window's lifetime, so closing is a request
-    --to the parent rather than a DestroySelf.
+    --The launchable host owns the lifetime, so close is a request, not DestroySelf.
     local function Close()
         if dlg ~= nil then
             dlg:Close()
         end
     end
 
-    --Nothing to run until a definition is selected and no other montage holds
-    --the table. There is no readiness test beyond that.
     local runButton = gui.Button{
         classes = { "sizeL", "disabled" },
         text = "Run",
@@ -239,9 +229,7 @@ function MTGDialog.Create()
     local runFooter = BuildFooter(run.footer)
     local endFooter = BuildFooter(ending.footer)
 
-    --Every state's row is built once and collapsed, the way the right pane's
-    --bodies are, so a swap never rebuilds a live control. That is also why the
-    --shell gets one full-width cell rather than having its own refilled.
+    --Rows are built once and collapsed, so the shell gets one full-width cell.
     local footerPanel = gui.Panel{
         width = "100%",
         height = "100%",
@@ -324,9 +312,6 @@ end
 --- nothing to watch. No footer.
 --- @return Panel
 function MTGDialog.CreatePlayerView()
-    --Name, play state and round, which the board used to carry itself.
-    --Nothing actionable in either: a player who opens the window while the
-    --montage is paused, or with none running, can only read it and close it.
     local function Notice(message)
         return gui.Panel{
             classes = { "collapsed" },
@@ -360,8 +345,7 @@ function MTGDialog.CreatePlayerView()
     local pausedBody = Notice("This montage is paused.")
     local idleBody = Notice("No montage is running.")
 
-    --Seeded from the state this window was built on, so one opened while the
-    --montage is paused stays put instead of closing on its first ping.
+    --Seeded, so a window opened while paused does not close on its first ping.
     local sawLive = IsLive(MTGRun.Active())
 
     --- Pause, Reset and Complete all end up here: a window that was showing a
@@ -385,8 +369,7 @@ function MTGDialog.CreatePlayerView()
         idleBody:SetClass("collapsed", run ~= nil)
     end
 
-    --mtgPlayerView is a marker, not a look: the celebration's Close button
-    --finds its host by it. The band and rule come from the shell.
+    --mtgPlayerView is a marker: the celebration's Close button finds its host by it.
     local dlg = DialogShell.CreateNew{
         classes = { "mtgPlayerView", "launchablePanel" },
         title = MTGConstants.playerPanelTitle,
@@ -439,12 +422,10 @@ local function CreateCelebrationOverlay(report)
         height = "100%",
         halign = "center",
         valign = "center",
-        --A parent with interactable=false blocks raycasts for its whole
-        --subtree, so the buttons below need this on.
+        --interactable=false on a parent blocks its whole subtree.
         interactable = true,
 
-        --Not a DialogShell - no heading band, no footer, just a dimmed layer -
-        --so the theme subscription is held and dropped by hand here.
+        --Not a DialogShell, so the theme subscription is held by hand.
         data = {
             themeSub = nil,
         },
@@ -500,8 +481,6 @@ function MTGDialog.RaiseForPlayer(args)
         return nil
     end
 
-    --LaunchPanelByName toggles, so a player who already has it open would have
-    --it shut in their face. Asking first is per-client.
     if not MTGDialog.IsOpen() then
         LaunchablePanel.LaunchPanelByName(MTGConstants.panelName)
     end
@@ -529,16 +508,13 @@ LaunchablePanel.Register{
     end,
 }
 
---Registered only for a Director, so a player has no such command and it never
---reaches their completions.
 if dmhub.isDM then
     Commands.RegisterMacro{
         name = "thcmontage",
         summary = "open the montage panel",
         doc = "Usage: /thcmontage [slug]\nOpens the Montage panel. Given a slug, selects that montage.",
 
-        --Reads the stored slug rather than EnsureSlug: completions run per
-        --keystroke and must not write to the library.
+            --Not EnsureSlug: completions run per keystroke and must not write.
         completions = function(args, argIndex)
             if argIndex ~= 1 then
                 return {}

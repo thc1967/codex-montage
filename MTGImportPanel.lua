@@ -125,8 +125,6 @@ function MTGImportPanel.Create(onDone)
         flow = "vertical",
         valign = "top",
 
-        --Reset every time this pane is shown: a stale paste from last time is
-        --never what the Director means to import.
         reset = function()
             jsonInput.text = ""
             importButton:SetClass("hidden", true)

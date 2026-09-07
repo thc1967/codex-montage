@@ -59,8 +59,7 @@ function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
         valign = "center",
     })
 
-    --The portrait and its frame are separate child panels, so desaturating
-    --only what CreateTokenImage returns leaves them untouched.
+    --The frame is a separate child, so desaturate the children too.
     if dimmed == true then
         image.selfStyle.saturation = 0
         for _, child in ipairs(image.children or {}) do
@@ -113,8 +112,7 @@ end
 function MTGWidgets.RecapCard(row, lines)
     local token = dmhub.GetCharacterById(row.charid)
 
-    --"image" keeps the portrait true-colour: the {panel} base tints a bare
-    --bgimage with @bg.
+    --"image" keeps the portrait true-colour; a bare bgimage is tinted @bg.
     local portraitPanel = gui.Panel{
         classes = { "image", "borderInfo" },
         interactable = false,
@@ -189,32 +187,29 @@ end
 
 --- The round's free participant tokens: everyone not currently standing on a
 --- test still in play. Anyone who already took a test this round is here too,
---- greyed, and can take another.
---- @param run MTGRun
---- @param participants MTGParticipant[]
+--- greyed, and can take another. Built once and handed the free participants
+--- with `setTray`; a token's portrait, drag and dimming are fixed at
+--- construction, so each sits in a slot remade when its state moves.
 --- @param onReturn fun(charid: string)
 --- @return Panel
-function MTGWidgets.Tray(run, participants, onReturn)
-    local children = {}
-    for _, p in ipairs(participants) do
-        local token = MTGWidgets.ParticipantToken(p, true, nil,
-            MTGRun.HasActedThisRound(run, p.charid))
-        if token ~= nil then
-            children[#children + 1] = token
-        end
-    end
+function MTGWidgets.Tray(onReturn)
+    local tokens = gui.Panel{
+        width = "auto",
+        height = "100%",
+        flow = "horizontal",
+        halign = "left",
+        valign = "center",
+    }
 
-    if #children == 0 then
-        children[#children + 1] = gui.Label{
-            classes = { "sizeXs", "noBold", "fgMuted" },
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "center",
-            textAlignment = "center",
-            text = "All Heroes assigned",
-        }
-    end
+    local emptyLabel = gui.Label{
+        classes = { "sizeXs", "noBold", "fgMuted" },
+        width = "100%",
+        height = "auto",
+        halign = "center",
+        valign = "center",
+        textAlignment = "center",
+        text = "All Heroes assigned",
+    }
 
     return gui.Panel{
         classes = { "bordered", "mtgTray" },
@@ -231,59 +226,77 @@ function MTGWidgets.Tray(run, participants, onReturn)
             onReturn(charid)
         end,
 
-        children = children,
+        --- @param entries {p: MTGParticipant, dimmed: boolean}[]
+        setTray = function(element, entries)
+            emptyLabel:SetClass("collapsed", #entries > 0)
+            MTGWidgets.BindList(tokens, entries, function()
+                return MTGWidgets.Slot{
+                    setToken = function(slot, entry)
+                        local state = ""
+                        if entry ~= nil then
+                            state = entry.p.charid .. "|" .. tostring(entry.dimmed)
+                                .. "|" .. tostring(MTGRun.CanManage(entry.p.charid))
+                        end
+                        MTGWidgets.SetSlot(slot, state, function()
+                            return MTGWidgets.ParticipantToken(entry.p, true, nil, entry.dimmed)
+                        end)
+                    end,
+                }
+            end, "setToken")
+        end,
+
+        tokens,
+        emptyLabel,
     }
 end
 
---- A progress meter. The module supplies label, value, max and the optional
---- detail line; the shell never composes that text itself.
---- @param meter table a DescribeProgress() entry
+--- One pip of a meter. Its tooltip is fixed at construction, so the slot
+--- holding it is remade when the pip is earned or given back.
+--- @param pip {earned: boolean, tone: string|nil, label: string, meterId: string, adjustable: boolean}
 --- @return Panel
-function MTGWidgets.Meter(meter)
-    local max = meter.max or 0
-    local value = math.min(meter.value or 0, max)
-
-    local earnedIcon = cond(meter.tone == "danger",
+local function Pip(pip)
+    local earnedIcon = cond(pip.tone == "danger",
         MTGConstants.iconFailure, MTGConstants.iconSuccess)
 
-    --The Director awards and takes back by hand on meters the module says may
-    --be moved. Which pip was clicked does not matter, only which side of the
-    --line it was on: a dim one adds, a lit one removes. That reads as filling
-    --the next pip or clearing the last, without the pips having to be told
-    --apart from one another.
-    local adjustable = dmhub.isDM and meter.adjustable == true and max > 0
+    local args = {
+        classes = { cond(pip.earned, MTGWidgets.ToneClass(pip.tone), "bgFgMuted") },
+        width = 22,
+        height = 22,
+        halign = "left",
+        valign = "center",
+        rmargin = 2,
+        vmargin = 1,
+        bgimage = cond(pip.earned, earnedIcon, MTGConstants.iconPending),
+    }
 
-    local pips = {}
-    for i = 1, max do
-        local earned = i <= value
-
-        --Built in one go rather than assigned onto afterwards: hover is fixed
-        --at construction and will not take a later write.
-        local args = {
-            classes = { cond(earned, MTGWidgets.ToneClass(meter.tone), "bgFgMuted") },
-            width = 22,
-            height = 22,
-            halign = "left",
-            valign = "center",
-            rmargin = 2,
-            vmargin = 1,
-            bgimage = cond(earned, earnedIcon, MTGConstants.iconPending),
-        }
-
-        if adjustable then
-            args.hover = gui.Tooltip(cond(earned,
-                string.format("Take back one %s", meter.label or "point"),
-                string.format("Award one %s", meter.label or "point")))
-            args.press = function()
-                MTGRun.AdjustProgress(meter.id, cond(earned, -1, 1))
-            end
+    if pip.adjustable then
+        args.hover = gui.Tooltip(cond(pip.earned,
+            string.format("Take back one %s", pip.label),
+            string.format("Award one %s", pip.label)))
+        args.press = function()
+            MTGRun.AdjustProgress(pip.meterId, cond(pip.earned, -1, 1))
         end
-
-        pips[#pips + 1] = gui.Panel(args)
     end
 
-    --Wraps rather than clips: a Director who sets a big limit gets a second
-    --row instead of pips disappearing off the edge.
+    return gui.Panel(args)
+end
+
+--- A progress meter. Built once and handed a descriptor with `setMeter`;
+--- handed nil, it collapses. The module supplies label, value, max and the
+--- optional detail line; the shell never composes that text itself.
+--- @return Panel
+function MTGWidgets.Meter()
+    local shown = {}
+
+    local titleLabel = gui.Label{
+        classes = { "sizeS" },
+        width = "100%",
+        height = "auto",
+        halign = "left",
+        valign = "top",
+        text = "",
+    }
+
     local pipRow = gui.Panel{
         width = "100%",
         height = "auto",
@@ -292,37 +305,16 @@ function MTGWidgets.Meter(meter)
         halign = "left",
         valign = "top",
         tmargin = 2,
-        children = pips,
     }
 
-    local children = {
-        gui.Label{
-            classes = { "sizeS" },
-            width = "100%",
-            height = "auto",
-            halign = "left",
-            valign = "top",
-            text = string.format("%s (%d/%d)", meter.label or "", meter.value or 0, max),
-        },
-
-        --One pip per point, in the same vocabulary the challenge rows use:
-        --unknown until it lands, then a check or an x. These are counts of
-        --events, never fractions, so a bar would imply a granularity that
-        --does not exist -- and at these magnitudes the pips are countable at
-        --a glance without reading the numeral.
-        pipRow,
+    local detailLabel = gui.Label{
+        classes = { "sizeXs", "noBold", "fgMuted" },
+        width = "100%",
+        height = "auto",
+        valign = "top",
+        tmargin = 2,
+        text = "",
     }
-
-    if meter.detail ~= nil and meter.detail ~= "" then
-        children[#children + 1] = gui.Label{
-            classes = { "sizeXs", "noBold", "fgMuted" },
-            width = "100%",
-            height = "auto",
-            valign = "top",
-            tmargin = 2,
-            text = meter.detail,
-        }
-    end
 
     return gui.Panel{
         width = "46%",
@@ -330,7 +322,60 @@ function MTGWidgets.Meter(meter)
         flow = "vertical",
         valign = "top",
         rmargin = 12,
-        children = children,
+
+        --- @param meter nil|table a DescribeProgress() entry
+        setMeter = function(element, meter)
+            element:SetClass("collapsed", meter == nil)
+            if meter == nil then
+                return
+            end
+
+            local max = meter.max or 0
+            local value = math.min(meter.value or 0, max)
+
+            local title = string.format("%s (%d/%d)", meter.label or "", meter.value or 0, max)
+            if shown.title ~= title then
+                shown.title = title
+                titleLabel.text = title
+            end
+
+            local adjustable = dmhub.isDM and meter.adjustable == true and max > 0
+            local pips = {}
+            for i = 1, max do
+                pips[i] = {
+                    earned = i <= value,
+                    tone = meter.tone,
+                    label = meter.label or "point",
+                    meterId = meter.id,
+                    adjustable = adjustable,
+                }
+            end
+            MTGWidgets.BindList(pipRow, pips, function()
+                return MTGWidgets.Slot{
+                    setPip = function(slot, pip)
+                        local state = ""
+                        if pip ~= nil then
+                            state = tostring(pip.earned) .. "|" .. tostring(pip.tone)
+                                .. "|" .. pip.label .. "|" .. tostring(pip.adjustable)
+                        end
+                        MTGWidgets.SetSlot(slot, state, function()
+                            return Pip(pip)
+                        end)
+                    end,
+                }
+            end, "setPip")
+
+            local detail = meter.detail or ""
+            if shown.detail ~= detail then
+                shown.detail = detail
+                detailLabel.text = detail
+                detailLabel:SetClass("collapsed", detail == "")
+            end
+        end,
+
+        titleLabel,
+        pipRow,
+        detailLabel,
     }
 end
 
@@ -363,16 +408,14 @@ function MTGWidgets.Overlay(text, sizeClass, hostLevels, inset)
         --Stops the raycast reaching the controls underneath.
         interactable = true,
 
-        --A host sized to its own content gives a percentage nothing to resolve
-        --against, and renderedHeight reads 0 until the first layout pass.
+        --A content-sized host resolves no percentage, and renderedHeight is 0 before layout.
         thinkTime = 0.2,
         think = function(element)
             if element:HasClass("collapsed") then
                 return
             end
 
-            --A rebuild can leave a stale link up the chain, and reading
-            --anything off a panel whose object has gone raises.
+            --Reading off a destroyed panel raises.
             local host = element
             for _ = 1, hostLevels do
                 if host == nil or not host.valid then
@@ -387,8 +430,7 @@ function MTGWidgets.Overlay(text, sizeClass, hostLevels, inset)
             local w = host.renderedWidth
             local h = host.renderedHeight
             if w ~= nil and w > 0 and h ~= nil and h > 0 then
-                --Padding counts as part of the host, so its rendered size
-                --includes it while children start inside it. Step back out.
+                --Rendered size includes the host's padding; children start inside it.
                 element.selfStyle.width = w
                 element.selfStyle.height = h
                 element.x = -inset
@@ -407,4 +449,83 @@ function MTGWidgets.Overlay(text, sizeClass, hostLevels, inset)
             text = text,
         },
     }
+end
+
+--- Hand a list of items to a container's children, one panel per item in
+--- order, the way the downtime sheet hands each project panel its project.
+--- A panel is built only when the list has outgrown the container; one past
+--- the end of the list is handed nil, collapses, and waits for the list to
+--- grow again. The event carries (item, index); a handler that gets nil
+--- collapses its panel and returns.
+--- @param container Panel
+--- @param items any[]
+--- @param build fun(index: number): Panel an unbound panel for that position
+--- @param bindEvent string
+function MTGWidgets.BindList(container, items, build, bindEvent)
+    local panels = container.children or {}
+    if #panels < #items then
+        for i = #panels + 1, #items do
+            panels[i] = build(i)
+        end
+        container.children = panels
+    end
+    for i, panel in ipairs(panels) do
+        panel:FireEvent(bindEvent, items[i], i)
+    end
+end
+
+--- A kept panel holding one control that is remade only when its state
+--- moves: an icon that flips, a token portrait, a block whose shape changes.
+--- An empty state empties the slot.
+--- @param slot Panel built with a data table
+--- @param state string
+--- @param build fun(): Panel|nil
+--- @return Panel|nil the child now in the slot
+function MTGWidgets.SetSlot(slot, state, build)
+    if slot.data.slotState ~= state then
+        slot.data.slotState = state
+        if state == "" then
+            slot.data.slotChild = nil
+            slot.children = {}
+        else
+            local child = build()
+            slot.data.slotChild = child
+            slot.children = { child }
+        end
+    end
+    return slot.data.slotChild
+end
+
+--- The slot SetSlot fills. Sized to its content so an empty one takes no
+--- room.
+--- @param args nil|table extra panel fields
+--- @return Panel
+function MTGWidgets.Slot(args)
+    local panel = {
+        width = "auto",
+        height = "auto",
+        flow = "none",
+        halign = "left",
+        valign = "center",
+        data = {},
+    }
+    for k, v in pairs(args or {}) do
+        panel[k] = v
+    end
+    return gui.Panel(panel)
+end
+
+--- Swap one theme class for another, for a badge whose tone moves.
+--- @param element Panel
+--- @param from string|nil the class currently on it
+--- @param to string
+--- @return string the class now on it
+function MTGWidgets.SwapClass(element, from, to)
+    if from ~= to then
+        if from ~= nil then
+            element:SetClass(from, false)
+        end
+        element:SetClass(to, true)
+    end
+    return to
 end

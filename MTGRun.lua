@@ -31,12 +31,18 @@ end
 --- @field round number
 --- @field status string
 --- @field paused boolean
+--- @field successLadder table what the Director narrates per outcome, by rung id
+--- @field successLadderShown boolean whether the table reads the ladder
 MTGRun = RegisterGameType("MTGRun")
 
 MTGRun.name = ""
 MTGRun.round = 1
 MTGRun.status = MTGConstants.statusSetup
 MTGRun.paused = false
+
+--- Copied from the Definition when the Run is made, so a Run started before
+--- the ladder existed reads as kept back rather than raising.
+MTGRun.successLadderShown = false
 
 --- @param args nil|table
 --- @return MTGRun
@@ -118,8 +124,7 @@ function MTGRun.EligibleParticipants()
             return
         end
 
-        --playerControlled is also true for party-shared tokens, so it is too
-        --wide here; NotShared is the one that means a named owner.
+        --playerControlled is true for party-shared tokens too; NotShared means a named owner.
         if not inDefaultParty and token.playerControlledNotShared ~= true then
             return
         end
@@ -135,14 +140,12 @@ function MTGRun.EligibleParticipants()
             charid = charid,
             name = token.name or "",
             isHero = isHero,
-            --Off the map means not in the scene, so it is offered but not
-            --ticked. The Director opts them in.
+            --Off the map is offered but not ticked; the Director opts them in.
             included = placed[charid] == true,
         }
     end
 
-    --Named explicitly rather than through unhidden_pairs below, so a hidden
-    --player party still seeds.
+    --Explicit, so a hidden player party still seeds.
     for _, charid in ipairs(dmhub.GetCharacterIdsInParty(partyId) or {}) do
         Consider(charid, true)
     end
@@ -188,6 +191,9 @@ function MTGRun.BeginSetup(defid)
         challenges = DeepCopy(def:try_get("challenges", {})),
         participants = MTGRun.EligibleParticipants(),
         status = MTGConstants.statusSetup,
+
+        successLadder = DeepCopy(def:try_get("successLadder", {})),
+        successLadderShown = def:try_get("successLadderShown", false) == true,
     }
 
     local doc = MTGRun.Doc()
@@ -332,6 +338,21 @@ function MTGRun.SetOutcomeShown(chid, shown)
     end)
 end
 
+--- Open the Success Ladder to the table, or take it back. Writes to the Run's
+--- own copy, so a reveal mid montage never edits the saved montage it came
+--- from and dies with the Run.
+--- @param shown boolean
+function MTGRun.SetLadderShown(shown)
+    local run = MTGRun.Active()
+    if run == nil or run:try_get("successLadderShown", false) == (shown == true) then
+        return
+    end
+
+    MTGRun.Mutate(cond(shown, "Show success ladder", "Hide success ladder"), function(r)
+        r.successLadderShown = shown == true
+    end)
+end
+
 --- @param chid string
 --- @param included boolean
 function MTGRun.SetChallengeIncluded(chid, included)
@@ -449,9 +470,7 @@ function MTGRun.Reset()
         run.challengeModuleState = {}
         run.ending = nil
 
-        --The rows ARE the record of play: every roll, outcome and staged
-        --Participant lives on them, so clearing them clears all of it. Start
-        --seeds a fresh set.
+        --The rows ARE the record of play; clearing them clears all of it.
         run.instances = {}
 
         for _, p in ipairs(run:try_get("participants", {})) do
@@ -471,6 +490,14 @@ function MTGRun.Setting(run, id, default)
         return default
     end
     return value
+end
+
+--- What the Director narrates when the montage lands on one rung.
+--- @param run MTGRun
+--- @param key string a MTGConstants.ladderRungs id
+--- @return string
+function MTGRun.LadderText(run, key)
+    return run:try_get("successLadder", {})[key] or ""
 end
 
 --- The rules module's per-challenge state, created on first access.
@@ -570,9 +597,7 @@ function MTGRun.AddChallengeAtRuntime(ch)
         end
         run.challenges[#run.challenges + 1] = ch
 
-        --SeedRound fires only on exact round equality and has already run for
-        --the round in play, so a row for this one has to be made here. A
-        --future round is left to SeedRound.
+        --SeedRound has already run for this round, so this row is made here.
         local round = run.round or 1
         if (ch.availableFromRound or 1) == round then
             if run:try_get("instances") == nil then
@@ -582,9 +607,7 @@ function MTGRun.AddChallengeAtRuntime(ch)
         end
     end)
 
-    --A copy, so the run and the montage are not sharing one table across two
-    --documents. The montage may since have been deleted; AppendChallenge
-    --shrugs that off.
+    --A copy: one table must not span two documents.
     if defid ~= nil then
         MTGDefinition.AppendChallenge(defid, DeepCopy(ch))
     end
@@ -640,9 +663,6 @@ end
 --- @param round number
 --- @return MTGParticipant[]
 function MTGRun.TrayParticipants(run, round)
-    --A token is one thing and can only be in one place, so it is out of the
-    --tray while it occupies a slot on a test still in play. A finished test
-    --releases it: it comes back and can take another, marked as having acted.
     local placed = {}
     for _, inst in ipairs(run:try_get("instances", {})) do
         if inst.adjudicatedInRound == nil then
@@ -723,20 +743,16 @@ function MTGRun.CanStage(run, inst, slot, charid)
     if inst[slot] ~= nil then
         return false
     end
-    --Nothing can join a row whose Lead has already rolled: an Assist arriving
-    --then would earn a grant with no roll left to apply it to.
+    --An Assist joining after the Lead rolled would earn a grant with no roll.
     if inst[slot .. "Roll"] ~= nil or inst.leadRoll ~= nil then
         return false
     end
-    --Lead and Assist are two Participants, so the other slot rules them out.
     local other = cond(slot == "lead", "assist", "lead")
     if inst[other] ~= nil and inst[other].charid == charid then
         return false
     end
 
-    --Stage lifts them off any row it can, but a slot they have already rolled
-    --in cannot be emptied without discarding the roll. Staging them anyway
-    --leaves them on two rows, and the second one holds them out of the tray.
+    --A rolled slot cannot be emptied, so staging anyway would leave two rows.
     for _, row in ipairs(run:try_get("instances", {})) do
         if row.id ~= inst.id and row.adjudicatedInRound == nil then
             if (row.lead ~= nil and row.lead.charid == charid and row.leadRoll ~= nil)
@@ -783,8 +799,7 @@ function MTGRun.SetChallengeField(challengeId, fieldId, value)
         return
     end
 
-    --Read through try_get rather than FieldsFor: FieldsFor CREATES the bag it
-    --cannot find, which would mutate the document outside a change.
+    --Not FieldsFor: it CREATES the bag, mutating the document outside a change.
     local target = nil
     for _, ch in ipairs(run:try_get("challenges", {})) do
         if ch.id == challengeId then
@@ -881,10 +896,7 @@ function MTGRun.BuildRecap(run)
             name = p.name or "",
             led = 0,
             assisted = 0,
-            --Challenges this hero actually moved: led to something other than a
-            --failure, or assisted well enough to hand the Lead an edge. A lead
-            --that failed and an assist that only earned a bane are left off --
-            --this is the credit list, not the attendance sheet.
+            --The credit list, not the attendance sheet.
             credits = {},
             bestTier = nil,
         }
@@ -923,8 +935,7 @@ function MTGRun.BuildRecap(run)
                             row.bestTier = roll.tier or 0
                         end
 
-                        --Tone rather than the outcome id, so a module can name
-                        --its outcomes whatever it likes and still be read here.
+                        --Tone, not the outcome id, so a module may name its outcomes freely.
                         local outcome = inst.outcome or {}
                         if outcome.tone ~= nil and outcome.tone ~= "danger" then
                             Credit(row, a.charid, ch)
@@ -932,9 +943,7 @@ function MTGRun.BuildRecap(run)
                     else
                         row.assisted = row.assisted + 1
 
-                        --"Edge or better" asked of AssistGrant rather than of a
-                        --tier number, so it follows if the assist tiers are ever
-                        --retuned.
+                        --Asked of AssistGrant, not a tier number, so retuning follows.
                         local assistRoll = inst.assistRoll
                         if assistRoll ~= nil then
                             local grantId = rules.AssistGrant(assistRoll.tier or 1)
@@ -980,14 +989,10 @@ end
 --- @param run MTGRun
 --- @return table
 function MTGRun.BuildReportPayload(run)
-    --Taken from the module's own meters rather than reading progress directly,
-    --so a Draw Steel montage closes on Successes and Failures while T&O closes
-    --on Threats and Opportunities, with no branch here.
+    --The module's meters, so no branch here between Draw Steel and T&O.
     local progress = {}
     for _, meter in ipairs(MTGRules.GetOrDefault(run.moduleId).DescribeProgress(run)) do
-        --Both forms travel: the meter's own label reads as a scale next to a
-        --ratio, but the closing line counts, and "1 Opportunities Seized" is
-        --not a sentence. The module knows its own singular.
+        --labelOne travels too: "1 Opportunities Seized" is not a sentence.
         progress[#progress + 1] = {
             label = meter.label or "",
             labelOne = meter.labelOne or meter.label or "",
@@ -995,10 +1000,19 @@ function MTGRun.BuildReportPayload(run)
         }
     end
 
+    --Travels whatever the eye said: a landed result reads either way.
+    local ending = run:try_get("ending", {})
+    local degree = ending.degree
+    local ladder = ""
+    if degree ~= nil then
+        ladder = MTGRun.LadderText(run, degree.id)
+    end
+
     return {
         name = run.name or "Montage",
-        ending = DeepCopy(run:try_get("ending", {})),
+        ending = DeepCopy(ending),
         progress = progress,
+        ladder = ladder,
         recap = MTGRun.BuildRecap(run),
     }
 end
@@ -1030,9 +1044,7 @@ end
 --- this fires on a timer, by which point any panel that asked for it is gone.
 --- @param payload table
 function MTGRun.PresentReport(payload)
-    --A local dismiss destroys the panel but leaves the presentdialog document
-    --standing, so without a ttl every later reload rebuilds the celebration.
-    --The board carries no ttl: that one has to last the session.
+    --Without a ttl every later reload would rebuild the celebration.
     GameHud.PresentDialogToUsers(GameHud.instance.parentPanel,
         MTGConstants.dialogId, { report = payload, ttl = MTGConstants.celebrationTTL })
 end
@@ -1057,9 +1069,7 @@ function MTGRun.CompleteRun()
     MTGRun.HideFromPlayers()
     MTGRun.AnnounceEnding(payload)
 
-    --After the table has been told, so building the document cannot delay the
-    --ending reaching the players; still before Discard, which takes the
-    --instances the journal is made of.
+    --After the announce, before Discard takes the instances the journal needs.
     if MTGRun.EndingWritesJournal(run) then
         MTGJournal.WriteResults(run)
     end
@@ -1205,8 +1215,7 @@ function MTGRun.SetResolution(instanceId, resolution)
     end
 
     local inst = MTGRun.Instance(run, instanceId)
-    --Clearing something already clear is the common case: Cancel and the Pump's
-    --lost-request path both fire it defensively.
+    --Clearing something already clear is the common case.
     if inst == nil or (inst.resolution == nil and resolution == nil) then
         return
     end
@@ -1266,8 +1275,7 @@ function MTGRun.Adjudicate(instanceId, outcome, alsoGrant)
             return
         end
 
-        --Folded in rather than left to a second change: a grant is one action
-        --to the Director, and two commits mean two rebuilds on every screen.
+        --Folded in: two commits would mean two rebuilds on every screen.
         if alsoGrant then
             inst.granted = true
         end

@@ -98,6 +98,8 @@ end
 --- @field moduleSettings table
 --- @field challenges MTGChallengeDef[]
 --- @field slug string a name-derived key, unique across the library
+--- @field successLadder table what the Director narrates per outcome, by rung id
+--- @field successLadderShown boolean whether the table reads the ladder
 MTGDefinition = RegisterGameType("MTGDefinition")
 
 --- Declared on the type so a montage authored before slugs existed reads as ""
@@ -109,6 +111,12 @@ MTGDefinition.image = ""
 MTGDefinition.description = ""
 MTGDefinition.folderId = ""
 MTGDefinition.moduleId = MTGConstants.moduleBaseline
+
+--- Whether the table reads the Success Ladder. Named for what lights the eye:
+--- a successLadderHidden twin would have to default TRUE to mean the same
+--- thing, which reads backwards as a type default. Declared here so a montage
+--- authored before the ladder existed reads as kept back without a migration.
+MTGDefinition.successLadderShown = false
 
 --- @param args nil|table
 --- @return MTGDefinition
@@ -434,6 +442,42 @@ function MTGDefinition.SetDescription(id, description)
     end)
 end
 
+--- What the Director narrates when the montage lands on one rung.
+--- @param def MTGDefinition
+--- @param key string a MTGConstants.ladderRungs id
+--- @return string
+function MTGDefinition.LadderText(def, key)
+    return def:try_get("successLadder", {})[key] or ""
+end
+
+--- @param id string
+--- @param key string a MTGConstants.ladderRungs id
+--- @param text string
+function MTGDefinition.SetLadderText(id, key, text)
+    MTGDefinition.Mutate("Edit success ladder", function(defs)
+        local def = defs[id]
+        if def == nil then
+            return
+        end
+        local ladder = def:get_or_add("successLadder", {})
+        if ladder[key] ~= text then
+            ladder[key] = text
+        end
+    end)
+end
+
+--- @param id string
+--- @param shown boolean whether the table reads the ladder
+function MTGDefinition.SetLadderShown(id, shown)
+    MTGDefinition.Mutate(cond(shown, "Show success ladder", "Hide success ladder"),
+        function(defs)
+            local def = defs[id]
+            if def ~= nil and def:try_get("successLadderShown", false) ~= shown then
+                def.successLadderShown = shown
+            end
+        end)
+end
+
 --- @param id string
 --- @param name string
 function MTGDefinition.Rename(id, name)
@@ -442,9 +486,7 @@ function MTGDefinition.Rename(id, name)
         if def ~= nil and def.name ~= name then
             def.name = name
 
-            --The slug tracks the current name, so a rename re-derives it.
-            --Anything already holding the old slug stops resolving; that is
-            --the chosen behaviour, not an oversight.
+            --A rename re-derives the slug; old slugs stop resolving by choice.
             def.slug = UniqueSlug(defs, id, name)
         end
     end)
@@ -526,8 +568,7 @@ function MTGDefinition.MoveChallenge(defid, challengeId, delta)
         local moving = challenges[from]
         local neighbour = challenges[to]
 
-        --Adopted before the swap, while the neighbour still names the group
-        --being moved into.
+        --Read before the swap, while the neighbour still names the target group.
         moving.availableFromRound = neighbour.availableFromRound or 1
         if def.moduleId == MTGConstants.moduleTO then
             local theirs = neighbour:FieldsFor(MTGConstants.moduleTO).type
@@ -654,15 +695,6 @@ function MTGDefinition.SetSetting(id, moduleId, fieldId, value)
     end)
 end
 
---==============================================================================
--- Import
---
--- A montage arrives as JSON: dmhub.FromJson is the only parser Lua can reach.
--- The template is GENERATED from the rules module's own SettingsFields() and
--- ChallengeFields(), so it cannot drift from what the importer accepts and a
--- new module needs no separate registration to be importable.
---==============================================================================
-
 --- @param value any
 --- @return string a quoted JSON string
 local function JsonString(value)
@@ -724,6 +756,17 @@ function MTGDefinition.BuildImportTemplate(moduleId)
         string.format("rules: %s", table.concat(moduleIds, " | ")),
         "characteristics and skills: display names or ids. Unknown entries are skipped.",
     }
+
+    local ladder = moduleId == MTGConstants.moduleBaseline
+    if ladder then
+        local rungIds = {}
+        for _, rung in ipairs(MTGConstants.ladderRungs) do
+            rungIds[#rungIds + 1] = rung.id
+        end
+        notes[#notes + 1] = string.format("successLadder: %s", table.concat(rungIds, " | "))
+        notes[#notes + 1] = "successLadderShown: whether the table reads the ladder."
+    end
+
     for _, field in ipairs(rules.ChallengeFields()) do
         local note = FieldNote(field)
         if note ~= nil then
@@ -740,6 +783,17 @@ function MTGDefinition.BuildImportTemplate(moduleId)
     Add(string.format('  "name": %s,', JsonString("New Montage")))
     Add(string.format('  "description": %s,', JsonString("")))
     Add(string.format('  "rules": %s,', JsonString(moduleId)))
+
+    if ladder then
+        Add('  "successLadderShown": false,')
+        Add('  "successLadder": {')
+        local rungs = MTGConstants.ladderRungs
+        for i, rung in ipairs(rungs) do
+            Add(string.format("    %s: %s%s", JsonString(rung.id), JsonString(""),
+                cond(i < #rungs, ",", "")))
+        end
+        Add("  },")
+    end
 
     Add('  "settings": {')
     local settings = rules.SettingsFields()
@@ -890,8 +944,7 @@ function MTGDefinition.ImportFromJson(text)
         return { ok = false, messages = { "Nothing to import." } }
     end
 
-    --FromJson reports success even for malformed input, so the shape is what
-    --gets checked rather than the flag it hands back.
+    --FromJson reports success even for malformed input, so check the shape.
     local parsed = dmhub.FromJson(text)
     local data = type(parsed) == "table" and parsed.result or nil
     if type(data) ~= "table" then
@@ -926,6 +979,38 @@ function MTGDefinition.ImportFromJson(text)
             local value = tonumber(data.settings[field.id])
             if value ~= nil then
                 def:SettingsFor(moduleId)[field.id] = value
+            end
+        end
+    end
+
+    if data.successLadderShown == true then
+        def.successLadderShown = true
+    end
+
+    --Kept whatever the module is, so a later switch to Draw Steel finds it.
+    if data.successLadder ~= nil then
+        if type(data.successLadder) ~= "table" then
+            messages[#messages + 1] = "Ignored successLadder: expected an object."
+        else
+            local rungs = {}
+            local known = {}
+            for _, rung in ipairs(MTGConstants.ladderRungs) do
+                known[rung.id] = true
+                local prose = data.successLadder[rung.id]
+                if type(prose) == "string" and trim(prose) ~= "" then
+                    rungs[rung.id] = prose
+                end
+            end
+
+            for key, _ in pairs(data.successLadder) do
+                if not known[key] then
+                    messages[#messages + 1] = string.format(
+                        "successLadder: ignored unknown rung \"%s\".", tostring(key))
+                end
+            end
+
+            if next(rungs) ~= nil then
+                def.successLadder = rungs
             end
         end
     end

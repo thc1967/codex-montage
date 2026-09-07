@@ -14,7 +14,6 @@ MTGRules.Register{
     --- @param challenges MTGChallengeDef[]
     --- @return MTGChallengeDef[]
     SortChallenges = function(run, challenges)
-        --Authored order, captured before sorting, breaks ties inside a group.
         local sorted = {}
         local authored = {}
         for i, ch in ipairs(challenges) do
@@ -26,8 +25,7 @@ MTGRules.Register{
             if ra ~= rb then
                 return ra < rb
             end
-            --Threats first, by rank rather than by spelling: "opportunity"
-            --sorts ahead of "threat" alphabetically, which is the wrong way up.
+            --Ranked, not alphabetical: "opportunity" would sort above "threat".
             local ta = cond(a:FieldsFor(MTGConstants.moduleTO).type == "opportunity", 2, 1)
             local tb = cond(b:FieldsFor(MTGConstants.moduleTO).type == "opportunity", 2, 1)
             if ta ~= tb then
@@ -47,9 +45,7 @@ MTGRules.Register{
     ChallengeStatus = function(run, inst, ch)
         local isThreat = ch:FieldsFor(MTGConstants.moduleTO).type ~= "opportunity"
 
-        --A finished attempt reports itself. The Challenge may still be
-        --unresolved -- that is what the fresh row underneath is for -- but
-        --this row is over and says what it produced.
+        --A row reports its own attempt; the Challenge may still be unresolved.
         if inst.adjudicatedInRound ~= nil then
             local outcome = inst.outcome or {}
             local failed = outcome.tone == "danger"
@@ -170,9 +166,7 @@ MTGRules.Register{
     --- @return string a state id
     PostResolutionState = function(run, ch, inst)
         local outcome = inst.outcome or {}
-        --A failed Threat comes straight back, uncapped: that is the module's
-        --whole personality. The repeat count only governs coming back after
-        --a success.
+        --A failed Threat always returns; the count only caps returns after a success.
         if outcome.tone ~= "success" then
             return MTGConstants.stateOpen
         end

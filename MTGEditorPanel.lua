@@ -7,13 +7,18 @@ MTGEditorPanel = {}
 local FIELDS_ACROSS = 3
 local FIELD_WIDTH = "30%"
 
---- A label-over-control form row.
---- @param labelText string
---- @param width string
---- @param control Panel
---- @return Panel
---- A "- [n] +" stepper over a bounded integer.
---- @param opts {value: number, min: number, max: number, commit: fun(n: number)}
+--- Two digits, matching the stepper's input width.
+local SETTING_MAX = 99
+
+--- @class MTGStepperOptions
+--- @field min number
+--- @field max number
+--- @field read fun(): number where the number comes from on each refresh
+--- @field commit fun(n: number) where a press or an edit sends it
+--- @field event nil|string refresh event to answer; defaults to refreshForm
+
+--- A "- [n] +" stepper over a bounded integer, built once.
+--- @param opts MTGStepperOptions
 --- @return Panel
 local function Stepper(opts)
     local input
@@ -33,7 +38,13 @@ local function Stepper(opts)
         numeric = true,
         characterLimit = 2,
         textAlignment = "center",
-        text = tostring(opts.value),
+        text = tostring(opts.min),
+        [opts.event or "refreshForm"] = function(element)
+            local text = tostring(opts.read())
+            if element.text ~= text then
+                element.text = text
+            end
+        end,
         change = function(element)
             Commit(tonumber(element.text) or opts.min)
         end,
@@ -74,12 +85,17 @@ local function Stepper(opts)
     }
 end
 
+--- A label-over-control form row.
+--- @param labelText string
+--- @param width string
+--- @param control Panel
+--- @param hint string|nil
 --- @param labelTrailing nil|Panel a control sitting to the right of the label
+--- @return Panel
 local function FormRow(labelText, width, control, hint, labelTrailing)
     local label = gui.Label{
         classes = { "formStacked", "sizeS" },
-        --A themed formStacked label is 98% wide, which would push anything
-        --beside it to the far edge of the row instead of against the text.
+        --A themed formStacked label is 98% wide and would push the control away.
         width = cond(labelTrailing == nil, nil, "auto"),
         text = labelText,
     }
@@ -117,28 +133,25 @@ local function FormRow(labelText, width, control, hint, labelTrailing)
     }
 end
 
---- @param defid string
+--- What the editor's fixed controls read. `rebuild` moves it.
+--- @class MTGEditorBinding
+--- @field defid string|nil
+--- @field def MTGDefinition|nil
+
+--- @param bound MTGEditorBinding
 --- @param moduleId string
 --- @param field table a SettingsFields() entry
---- @param value number
 --- @return Panel
-local function SettingField(defid, moduleId, field, value)
-    return FormRow(field.text, FIELD_WIDTH, gui.Input{
-        classes = { "formStacked", "sizeXs" },
-        numeric = true,
-        characterLimit = 3,
-        text = tostring(value),
-
-        change = function(element)
-            local current = MTGDefinition.GetByID(defid)
-            if current == nil then
-                return
-            end
-
-            local n = tonumber(element.text) or tonumber((element.text or ""):match("%-?%d+")) or field.default
-            n = math.max(field.min or 1, math.floor(n))
-            element.text = tostring(n)
-            MTGDefinition.SetSetting(defid, moduleId, field.id, n)
+local function SettingField(bound, moduleId, field)
+    return FormRow(field.text, FIELD_WIDTH, Stepper{
+        min = field.min or 1,
+        max = field.max or SETTING_MAX,
+        event = "refreshSettings",
+        read = function()
+            return bound.def:SettingValue(moduleId, field)
+        end,
+        commit = function(n)
+            MTGDefinition.SetSetting(bound.defid, moduleId, field.id, n)
         end,
     })
 end
@@ -208,32 +221,70 @@ local function DraftStore(draft, moduleId, onChanged)
     }
 end
 
+--- What one form's controls read. `setChallenge` moves all three at once.
+--- @class MTGFormBinding
+--- @field ch MTGChallengeDef|nil
+--- @field store MTGChallengeStore|nil
+--- @field moduleId string|nil
+
+--- An eye that reports one boolean and flips it on press. Built once; its
+--- icon and tooltip follow the flag on each refresh.
+--- @param read fun(): boolean
+--- @param onTip string tooltip while on
+--- @param offTip string tooltip while off
+--- @param onIcon string
+--- @param offIcon string
+--- @param press fun(on: boolean)
+--- @return Panel
+local function EyeButton(read, onTip, offTip, onIcon, offIcon, press)
+    local shown = nil
+    return gui.Button{
+        classes = { "sizeXs" },
+        icon = offIcon,
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        lmargin = 6,
+        refreshForm = function(element)
+            local on = read()
+            if shown ~= on then
+                shown = on
+                element:FireEvent("setIcon", cond(on, onIcon, offIcon))
+                element.tooltip = gui.Tooltip(cond(on, onTip, offTip))
+            end
+        end,
+        click = function()
+            press(read())
+        end,
+    }
+end
+
 --- A module-contributed field on one Challenge.
---- @param store MTGChallengeStore
---- @param ch MTGChallengeDef
+--- @param bound MTGFormBinding
 --- @param moduleId string
 --- @param field table a ChallengeFields() entry
 --- @param hint string|nil
 --- @return Panel
-local function ChallengeModuleField(store, ch, moduleId, field, hint)
-    local value = ch:FieldValue(moduleId, field)
-
+local function ChallengeModuleField(bound, moduleId, field, hint)
     if field.type == "choice" then
         local control = gui.Dropdown{
             classes = { "formStacked", "sizeS" },
             options = field.options,
-            idChosen = value,
+            idChosen = field.default,
+            refreshForm = function(element)
+                local value = bound.ch:FieldValue(moduleId, field)
+                if element.idChosen ~= value then
+                    element.idChosen = value
+                end
+            end,
             change = function(element)
-                store.SetModuleField(field.id, element.idChosen)
+                bound.store.SetModuleField(field.id, element.idChosen)
             end,
         }
 
-        --Difficulty alone can be kept from the table. Nothing else a module
-        --contributes is a secret worth keeping, and T&O has no difficulty.
+        --Difficulty is the only module field worth keeping from the table.
         if field.id == "difficulty" then
-            local current = store.Read()
-            local hidden = current ~= nil and current:try_get("difficultyHidden", false) == true
-
             control = gui.Panel{
                 width = "100%",
                 height = "auto",
@@ -242,102 +293,114 @@ local function ChallengeModuleField(store, ch, moduleId, field, hint)
 
                 control,
 
-                gui.Button{
-                    classes = { "sizeXs" },
-                    icon = cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
-                    width = 16,
-                    height = 16,
-                    halign = "left",
-                    valign = "center",
-                    lmargin = 6,
-                    hover = gui.Tooltip(cond(hidden,
-                        "Difficulty hidden from the table. Press to show it.",
-                        "The table can see the difficulty. Press to hide it.")),
-                    click = function()
-                        store.SetField("difficultyHidden", not hidden)
-                    end,
-                },
+                EyeButton(function()
+                    return bound.ch:try_get("difficultyHidden", false) == true
+                end,
+                    "Difficulty hidden from the table. Press to show it.",
+                    "The table can see the difficulty. Press to hide it.",
+                    "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png",
+                    function(on)
+                        bound.store.SetField("difficultyHidden", not on)
+                    end),
             }
         end
 
         return FormRow(field.text, FIELD_WIDTH, control, hint)
     end
 
-    --The Outcome is the one authored line the table may be kept from: it names
-    --what a Threat costs or an Opportunity pays, which is the surprise. Off by
-    --default, and a landed Outcome shows regardless of this.
+    --Off by default; a landed Outcome shows regardless.
     local labelTrailing = nil
     if moduleId == MTGConstants.moduleTO and field.id == "outcome" then
-        local current = store.Read()
-        local shown = current ~= nil and current:try_get("outcomeShown", false) == true
-
-        labelTrailing = gui.Button{
-            classes = { "sizeXs" },
-            icon = cond(shown, "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"),
-            width = 16,
-            height = 16,
-            halign = "left",
-            valign = "center",
-            lmargin = 6,
-            hover = gui.Tooltip(cond(shown,
-                "The table can read this Outcome. Press to keep it back.",
-                "Kept from the table until it lands. Press to show it always.")),
-            click = function()
-                store.SetField("outcomeShown", not shown)
-            end,
-        }
+        labelTrailing = EyeButton(function()
+            return bound.ch:try_get("outcomeShown", false) == true
+        end,
+            "The table can read this Outcome. Press to keep it back.",
+            "Kept from the table until it lands. Press to show it always.",
+            "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png",
+            function(on)
+                bound.store.SetField("outcomeShown", not on)
+            end)
     end
 
     return FormRow(field.text, "60%", gui.Input{
         classes = { "formStacked", "sizeS" },
-        text = tostring(value or ""),
+        text = "",
         characterLimit = 200,
+        refreshForm = function(element)
+            local text = tostring(bound.ch:FieldValue(moduleId, field) or "")
+            if element.text ~= text then
+                element.text = text
+            end
+        end,
         change = function(element)
-            store.SetModuleField(field.id, element.text or "")
+            bound.store.SetModuleField(field.id, element.text or "")
         end,
     }, nil, labelTrailing)
 end
 
+--- The ids a multiselect has ticked. Its value can carry false entries for
+--- ids that were unticked, so the set is rebuilt from the true ones before
+--- it is compared with what the document holds.
+--- @param value table<string, boolean>
+--- @return table<string, boolean>
+local function TickedSet(value)
+    local set = {}
+    for id, flag in pairs(value or {}) do
+        if flag then
+            set[id] = true
+        end
+    end
+    return set
+end
+
 --- Allowed characteristics. Ordered: a hero who ties across two of these
 --- takes whichever the Director listed first, so selection order is data.
---- @param store MTGChallengeStore
---- @param ch MTGChallengeDef
+--- @param bound MTGFormBinding
 --- @param hint string|nil
 --- @return Panel
-local function CharacteristicsPicker(store, ch, hint)
+local function CharacteristicsPicker(bound, hint)
     local options = MTGUtils.CharacteristicOptions()
-    local chosen = ch:try_get("allowedCharacteristics", {})
 
     return FormRow("Allowed Characteristics", "46%",
         gui.Multiselect{
             classes = { "formStacked", "sizeS" },
             dropdown = { hasSearch = false },
             options = options,
-            value = MTGUtils.ToSet(chosen),
+            value = {},
+            refreshForm = function(element)
+                local set = MTGUtils.ToSet(bound.ch:try_get("allowedCharacteristics", {}))
+                if not dmhub.DeepEqual(TickedSet(element.value), set) then
+                    element.value = set
+                end
+            end,
             change = function(element)
                 local existing = {}
-                local current = store.Read()
+                local current = bound.store.Read()
                 if current ~= nil then
                     existing = current:try_get("allowedCharacteristics", {})
                 end
-                store.SetCharacteristics(
+                bound.store.SetCharacteristics(
                     MTGUtils.MergeOrdered(element.value, existing, options))
             end,
         }, hint)
 end
 
---- @param store MTGChallengeStore
---- @param ch MTGChallengeDef
+--- @param bound MTGFormBinding
 --- @return Panel
-local function SkillsPicker(store, ch)
+local function SkillsPicker(bound)
     local options = MTGUtils.SkillOptions()
-    local chosen = ch:try_get("allowedSkills", {})
 
     return FormRow("Allowed Skills", "46%",
         gui.Multiselect{
             classes = { "formStacked", "sizeS" },
             options = options,
-            value = MTGUtils.ToSet(chosen),
+            value = {},
+            refreshForm = function(element)
+                local set = MTGUtils.ToSet(bound.ch:try_get("allowedSkills", {}))
+                if not dmhub.DeepEqual(TickedSet(element.value), set) then
+                    element.value = set
+                end
+            end,
             change = function(element)
                 local list = {}
                 for _, option in ipairs(options) do
@@ -345,7 +408,7 @@ local function SkillsPicker(store, ch)
                         list[#list + 1] = option.id
                     end
                 end
-                store.SetSkills(list)
+                bound.store.SetSkills(list)
             end,
         })
 end
@@ -376,14 +439,14 @@ local function SummaryText(ch, moduleId)
 end
 
 --- The field rows of a Challenge, shared by the library editor and the
---- run-time draft. Everything it writes goes through the store, so the caller
---- decides whether that lands in a saved montage or a private draft.
---- @param ch MTGChallengeDef
---- @param moduleId string
---- @param store MTGChallengeStore
+--- run-time draft. Built once and pointed at a Challenge with
+--- `setChallenge(ch, store, moduleId)`, after which every control patches
+--- itself from that binding. Everything it writes goes through the store, so
+--- the caller decides whether that lands in a saved montage or a private
+--- draft.
 --- @param opts nil|{showRequired: boolean}
---- @return Panel[]
-function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
+--- @return Panel
+function MTGEditorPanel.ChallengeForm(opts)
     opts = opts or {}
 
     local required = nil
@@ -391,15 +454,43 @@ function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
         required = "Required."
     end
 
-    --Only a choice field can be required: a module's free text, like T&O's
-    --outcome, is the Director's business.
-    local moduleFields = {}
-    for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
-        moduleFields[#moduleFields + 1] = ChallengeModuleField(store, ch, moduleId, field,
-            cond(field.type == "choice", required))
+    --- @type MTGFormBinding
+    local bound = {}
+
+    --Only a choice field can be required; free text is the Director's business.
+    local function ModuleFieldsRow(moduleId)
+        local moduleFields = {}
+        for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
+            moduleFields[#moduleFields + 1] = ChallengeModuleField(bound, moduleId, field,
+                cond(field.type == "choice", required))
+        end
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+            children = moduleFields,
+        }
     end
 
-    return {
+    local moduleFieldsSlot = MTGWidgets.Slot{ width = "100%" }
+
+    return gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        setChallenge = function(element, ch, store, moduleId)
+            bound.ch = ch
+            bound.store = store
+            bound.moduleId = moduleId
+            MTGWidgets.SetSlot(moduleFieldsSlot, moduleId, function()
+                return ModuleFieldsRow(moduleId)
+            end)
+            element:FireEventTree("refreshForm")
+        end,
+
         gui.Panel{
             width = "100%",
             height = "auto",
@@ -408,33 +499,43 @@ function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
 
             FormRow("Name", "42%", gui.Input{
                 classes = { "formStacked", "sizeS" },
-                text = ch.name or "",
+                text = "",
                 characterLimit = 80,
+                refreshForm = function(element)
+                    local name = bound.ch.name or ""
+                    if element.text ~= name then
+                        element.text = name
+                    end
+                end,
                 change = function(element)
                     local newName = string.trim(element.text or "")
                     if newName == "" then
-                        element.text = ch.name or ""
+                        element.text = bound.ch.name or ""
                         return
                     end
-                    store.SetField("name", newName)
+                    bound.store.SetField("name", newName)
                 end,
             }, required),
 
             FormRow("From Round", "16%", Stepper{
-                value = ch.availableFromRound or 1,
                 min = 1,
                 max = MTGConstants.roundMax,
+                read = function()
+                    return bound.ch.availableFromRound or 1
+                end,
                 commit = function(n)
-                    store.SetField("availableFromRound", n)
+                    bound.store.SetField("availableFromRound", n)
                 end,
             }, required),
 
             FormRow("Repeats", "16%", Stepper{
-                value = ch:RepeatLimit(),
                 min = 0,
                 max = MTGConstants.repeatMax,
+                read = function()
+                    return bound.ch:RepeatLimit()
+                end,
                 commit = function(n)
-                    store.SetField("repeatable", n)
+                    bound.store.SetField("repeatable", n)
                 end,
             }),
         },
@@ -447,10 +548,16 @@ function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
 
             FormRow("Description", "92%", gui.Input{
                 classes = { "formStacked", "sizeS" },
-                text = ch.description or "",
+                text = "",
                 characterLimit = 300,
+                refreshForm = function(element)
+                    local description = bound.ch.description or ""
+                    if element.text ~= description then
+                        element.text = description
+                    end
+                end,
                 change = function(element)
-                    store.SetField("description", element.text or "")
+                    bound.store.SetField("description", element.text or "")
                 end,
             }),
         },
@@ -461,17 +568,11 @@ function MTGEditorPanel.ChallengeForm(ch, moduleId, store, opts)
             flow = "horizontal",
             valign = "top",
 
-            CharacteristicsPicker(store, ch, required),
-            SkillsPicker(store, ch),
+            CharacteristicsPicker(bound, required),
+            SkillsPicker(bound),
         },
 
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-            children = moduleFields,
-        },
+        moduleFieldsSlot,
     }
 end
 
@@ -533,13 +634,16 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
         end,
     }
 
-    --The form is left standing and only the button is retoned: rebuilding it
-    --on every edit would take the caret out of whatever field is being typed.
+    --Rebuilding the form would take the caret out of the field being typed.
     local function SyncPresent()
         if presentButton ~= nil and presentButton.valid then
             presentButton:SetClass("disabled", not DraftReady(draft, moduleId))
         end
     end
+
+    --The draft is this card's own; no document write changes it.
+    local form = MTGEditorPanel.ChallengeForm{ showRequired = true }
+    form:FireEvent("setChallenge", draft, DraftStore(draft, moduleId, SyncPresent), moduleId)
 
     return gui.Panel{
         classes = { "bordered" },
@@ -587,125 +691,89 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
             },
         },
 
-        gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "vertical",
-            valign = "top",
-            children = MTGEditorPanel.ChallengeForm(draft, moduleId,
-                DraftStore(draft, moduleId, SyncPresent), { showRequired = true }),
-        },
+        form,
     }
 end
 
---- One authored Challenge.
---- @param defid string
---- @param def MTGDefinition
---- @param ch MTGChallengeDef
---- @param index number
+--- One authored Challenge's card. Built once and handed a Challenge with
+--- `setChallenge`; handed nil, it collapses and waits for the next one.
 --- @param expanded table<string, boolean> this client's fold state, by challenge
 --- @return Panel
-local function ChallengeCard(defid, def, ch, index, expanded)
-    local chid = ch.id
-    local moduleId = def.moduleId
-    local complete = MTGRules.GetOrDefault(moduleId).IsChallengeComplete(ch, moduleId)
+local function ChallengeCard(expanded)
+    --- What the card's own controls read. `setChallenge` moves it.
+    --- @class MTGCardBinding
+    --- @field defid string|nil
+    --- @field ch MTGChallengeDef|nil
+    local bound = {}
 
-    --Decided on first sight and then remembered: a finished challenge folds
-    --away, one still missing fields stays open. Recording it means typing the
-    --last field does not snap the card shut mid-edit.
-    local open = expanded[chid]
-    if open == nil then
-        open = not complete
-        expanded[chid] = open
-    end
+    local shown = {}
 
-    local body = gui.Panel{
-        classes = { cond(not open, "collapsed") },
-        width = "100%",
-        height = "auto",
-        flow = "vertical",
-        valign = "top",
-        children = MTGEditorPanel.ChallengeForm(ch, moduleId,
-            DefinitionStore(defid, chid, moduleId)),
-    }
+    local form = MTGEditorPanel.ChallengeForm()
 
     local summaryLabel = gui.Label{
-        classes = { "sizeS", "fgMuted", cond(open, "collapsed") },
+        classes = { "sizeS", "fgMuted" },
         width = "auto",
         height = "auto",
         halign = "left",
         valign = "center",
         lmargin = 12,
-        text = SummaryText(ch, moduleId),
+        text = "",
     }
 
-    local topRight = {}
+    local titleLabel = gui.Label{
+        classes = { "sizeS", "bold" },
+        width = "auto",
+        height = "auto",
+        halign = "left",
+        valign = "center",
+        text = "",
+    }
 
-    --Authored order is the array's own order, so these move the Challenge
-    --rather than setting a number. One glyph for both: the up arrow is the same
-    --asset turned over.
-    --Only the moves that exist: nothing to press at the ends of the list, so
-    --nothing is drawn there.
-    local total = #(def:try_get("challenges", {}))
-    local moves = {}
-    if index > 1 then
-        moves[#moves + 1] = { delta = -1, up = true }
-    end
-    if index < total then
-        moves[#moves + 1] = { delta = 1, up = false }
-    end
-
-    for _, move in ipairs(moves) do
-        topRight[#topRight + 1] = gui.Button{
+    local function MoveButton(up)
+        return gui.Button{
             classes = { "sizeXs" },
             icon = "phosphor/arrow-fat-down-fill.png",
-            rotate = cond(move.up, 180, 0),
+            rotate = cond(up, 180, 0),
             width = 16,
             height = 16,
             halign = "right",
             valign = "center",
             hmargin = 2,
-            hover = gui.Tooltip(cond(move.up, "Move up", "Move down")),
+            hover = gui.Tooltip(cond(up, "Move up", "Move down")),
             click = function()
-                MTGDefinition.MoveChallenge(defid, chid, move.delta)
+                MTGDefinition.MoveChallenge(bound.defid, bound.ch.id, cond(up, -1, 1))
             end,
         }
     end
+    local upButton = MoveButton(true)
+    local downButton = MoveButton(false)
 
-    --Authored here and nowhere else: hiding is a decision about how the montage
-    --is built, not a lever to pull mid-play.
-    local hidden = ch:try_get("hidden", false) == true
-
-    topRight[#topRight + 1] = gui.Button{
+    local hiddenEye = gui.Button{
         classes = { "sizeXs" },
-        icon = cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
+        icon = "phosphor/eye-bold.png",
         width = 16,
         height = 16,
         halign = "right",
         valign = "center",
         hmargin = 2,
-        hover = gui.Tooltip(cond(hidden,
-            "Hidden. Press to make it visible.",
-            "Visible. Press to hide it.")),
         click = function()
-            MTGDefinition.SetChallengeField(defid, chid, "hidden", not hidden)
+            MTGDefinition.SetChallengeField(bound.defid, bound.ch.id, "hidden",
+                not (bound.ch:try_get("hidden", false) == true))
         end,
     }
 
-    if complete then
-        topRight[#topRight + 1] = gui.Panel{
-            classes = { "image" },
-            bgimage = MTGConstants.iconConfigured,
-            width = 16,
-            height = 16,
-            halign = "right",
-            valign = "center",
-            hmargin = 2,
-            hover = gui.Tooltip("Ready to run"),
-        }
-    end
+    local completeIcon = gui.Panel{
+        classes = { "image" },
+        bgimage = MTGConstants.iconConfigured,
+        width = 16,
+        height = 16,
+        halign = "right",
+        valign = "center",
+        hmargin = 2,
+        hover = gui.Tooltip("Ready to run"),
+    }
 
-    topRight[#topRight + 1] = gui.Button{
+    local deleteButton = gui.Button{
         classes = { "deleteButton", "sizeXs" },
         halign = "right",
         valign = "top",
@@ -713,28 +781,25 @@ local function ChallengeCard(defid, def, ch, index, expanded)
         requireConfirm = true,
         hover = gui.Tooltip("Remove this challenge"),
         click = function()
-            MTGDefinition.RemoveChallenge(defid, chid)
+            MTGDefinition.RemoveChallenge(bound.defid, bound.ch.id)
         end,
     }
 
-    local arrowArgs = {
+    local arrow = gui.ExpandoArrow{
         classes = { "bgFgStrong" },
         width = 12,
         height = 12,
         halign = "left",
         valign = "center",
         rmargin = 4,
+        click = function(element)
+            local nowOpen = not element:HasClass("expanded")
+            element:SetClass("expanded", nowOpen)
+            expanded[bound.ch.id] = nowOpen
+            form:SetClass("collapsed", not nowOpen)
+            summaryLabel:SetClass("collapsed", nowOpen)
+        end,
     }
-    if open then
-        arrowArgs.classes[#arrowArgs.classes + 1] = "expanded"
-    end
-    arrowArgs.click = function(element)
-        local nowOpen = not element:HasClass("expanded")
-        element:SetClass("expanded", nowOpen)
-        expanded[chid] = nowOpen
-        body:SetClass("collapsed", not nowOpen)
-        summaryLabel:SetClass("collapsed", nowOpen)
-    end
 
     return gui.Panel{
         classes = { "bordered" },
@@ -745,26 +810,66 @@ local function ChallengeCard(defid, def, ch, index, expanded)
         pad = 8,
         vmargin = 4,
 
+        --- @param item nil|{defid: string, moduleId: string, ch: MTGChallengeDef, index: number, total: number}
+        setChallenge = function(element, item)
+            element:SetClass("collapsed", item == nil)
+            if item == nil then
+                return
+            end
+
+            local ch = item.ch
+            local moduleId = item.moduleId
+            bound.defid = item.defid
+            bound.ch = ch
+
+            local complete = MTGRules.GetOrDefault(moduleId).IsChallengeComplete(ch, moduleId)
+
+            --Remembered on first sight, so typing the last field does not snap it shut.
+            local open = expanded[ch.id]
+            if open == nil then
+                open = not complete
+                expanded[ch.id] = open
+            end
+            arrow:SetClass("expanded", open)
+            form:SetClass("collapsed", not open)
+            summaryLabel:SetClass("collapsed", open)
+
+            local title = cond(ch:try_get("name", "") ~= "", ch.name, "Challenge " .. tostring(item.index))
+            if shown.title ~= title then
+                shown.title = title
+                titleLabel.text = title
+            end
+            local summary = SummaryText(ch, moduleId)
+            if shown.summary ~= summary then
+                shown.summary = summary
+                summaryLabel.text = summary
+            end
+
+            upButton:SetClass("collapsed", item.index <= 1)
+            downButton:SetClass("collapsed", item.index >= item.total)
+            completeIcon:SetClass("collapsed", not complete)
+
+            local hidden = ch:try_get("hidden", false) == true
+            if shown.hidden ~= hidden then
+                shown.hidden = hidden
+                hiddenEye:FireEvent("setIcon",
+                    cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"))
+                hiddenEye.tooltip = gui.Tooltip(cond(hidden,
+                    "Hidden. Press to make it visible.",
+                    "Visible. Press to hide it."))
+            end
+
+            form:FireEvent("setChallenge", ch, DefinitionStore(item.defid, ch.id, moduleId), moduleId)
+        end,
+
         gui.Panel{
             width = "100%",
             height = "auto",
             flow = "horizontal",
             valign = "top",
 
-            gui.ExpandoArrow(arrowArgs),
-
-            gui.Label{
-                classes = { "sizeS", "bold" },
-                width = "auto",
-                height = "auto",
-                halign = "left",
-                valign = "center",
-                --Falls back to the ordinal only while the Challenge is nameless,
-                --which is the state a freshly added one arrives in.
-                text = cond(ch:try_get("name", "") ~= "",
-                    ch.name, "Challenge " .. tostring(index)),
-            },
-
+            arrow,
+            titleLabel,
             summaryLabel,
 
             gui.Panel{
@@ -773,19 +878,25 @@ local function ChallengeCard(defid, def, ch, index, expanded)
                 flow = "horizontal",
                 halign = "right",
                 valign = "top",
-                children = topRight,
+
+                upButton,
+                downButton,
+                hiddenEye,
+                completeIcon,
+                deleteButton,
             },
         },
 
-        body,
+        form,
     }
 end
 
---- @param defid string
---- @param def MTGDefinition
---- @return Panel[]
-local function SettingBands(defid, def)
-    local moduleId = def.moduleId
+--- The settings form for one rules module: its fields in bands of
+--- FIELDS_ACROSS, each reading the bound montage on `refreshSettings`.
+--- @param bound MTGEditorBinding
+--- @param moduleId string
+--- @return Panel
+local function SettingsForm(bound, moduleId)
     local fields = MTGRules.GetOrDefault(moduleId).SettingsFields()
 
     local bands = {}
@@ -795,7 +906,7 @@ local function SettingBands(defid, def)
         if current == nil then
             current = {}
         end
-        current[#current + 1] = SettingField(defid, moduleId, field, def:SettingValue(moduleId, field))
+        current[#current + 1] = SettingField(bound, moduleId, field)
 
         if #current == FIELDS_ACROSS or i == #fields then
             bands[#bands + 1] = gui.Panel{
@@ -810,7 +921,13 @@ local function SettingBands(defid, def)
         end
     end
 
-    return bands
+    return gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        children = bands,
+    }
 end
 
 --- The editor half of the montage form. Point it at a montage by firing
@@ -819,16 +936,15 @@ end
 function MTGEditorPanel.Create()
     local m_defid = nil
 
-    --Fold state this client chose, by challenge. Absent means open, so a
-    --freshly authored challenge lands with its fields in reach.
     local m_cardExpanded = {}
 
-    local settingsPanel = gui.Panel{
-        width = "100%",
-        height = "auto",
-        flow = "vertical",
-        valign = "top",
-    }
+    --The eye cannot be read back off the button.
+    local m_ladderShown = nil
+
+    --- @type MTGEditorBinding
+    local bound = {}
+
+    local settingsSlot = MTGWidgets.Slot{ width = "100%" }
 
     local challengesPanel = gui.Panel{
         width = "100%",
@@ -845,6 +961,123 @@ function MTGEditorPanel.Create()
         vmargin = 12,
         textAlignment = "center",
         text = "No challenges yet. Use the + button to add one.",
+    }
+
+    --One body: the notice has its own collapsed class and the two must not fight.
+    local challengesBody = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        challengesPanel,
+        noChallengesLabel,
+    }
+
+    --Never written to the document: this Director's fold, not the montage's.
+    local challengesArrow = gui.ExpandoArrow{
+        classes = { "bgFg", "expanded" },
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        rmargin = 4,
+        click = function(element)
+            local nowExpanded = not element:HasClass("expanded")
+            element:SetClass("expanded", nowExpanded)
+            challengesBody:SetClass("collapsed", not nowExpanded)
+        end,
+    }
+
+    local ladderInputs = {}
+    local ladderRows = {}
+    for _, rung in ipairs(MTGConstants.ladderRungs) do
+        local key = rung.id
+        local input = gui.Input{
+            classes = { "formStacked", "sizeS" },
+            width = "100%",
+            height = 60,
+            multiline = true,
+            textAlignment = "topLeft",
+            characterLimit = 1000,
+            text = "",
+            change = function(element)
+                if m_defid ~= nil then
+                    MTGDefinition.SetLadderText(m_defid, key, element.text or "")
+                end
+            end,
+        }
+        ladderInputs[key] = input
+        ladderRows[#ladderRows + 1] = FormRow(rung.text, "96%", input)
+    end
+
+    local ladderBody = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+        children = ladderRows,
+    }
+
+    local ladderArrow = gui.ExpandoArrow{
+        classes = { "bgFg", "expanded" },
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        rmargin = 4,
+        click = function(element)
+            local nowExpanded = not element:HasClass("expanded")
+            element:SetClass("expanded", nowExpanded)
+            ladderBody:SetClass("collapsed", not nowExpanded)
+        end,
+    }
+
+    --Built bare: hover cannot be re-assigned, so the tooltip is patched.
+    local ladderEye = gui.Button{
+        classes = { "sizeXs" },
+        icon = "phosphor/eye-slash-duotone.png",
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        lmargin = 6,
+        click = function()
+            local def = m_defid ~= nil and MTGDefinition.GetByID(m_defid) or nil
+            if def ~= nil then
+                MTGDefinition.SetLadderShown(m_defid,
+                    def:try_get("successLadderShown", false) ~= true)
+            end
+        end,
+    }
+
+    local ladderSection = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "horizontal",
+            valign = "top",
+            vmargin = 8,
+
+            ladderArrow,
+
+            gui.Label{
+                classes = { "tableLabel" },
+                width = "auto",
+                height = "auto",
+                valign = "center",
+                text = "Success Ladder",
+            },
+
+            ladderEye,
+        },
+
+        ladderBody,
     }
 
     local nameInput = gui.Input{
@@ -923,9 +1156,11 @@ function MTGEditorPanel.Create()
             FormRow("Rules", "30%", moduleDropdown),
         },
 
-        settingsPanel,
+        settingsSlot,
 
         FormRow("Description", "96%", descriptionInput),
+
+        ladderSection,
 
         gui.Panel{
             width = "100%",
@@ -933,6 +1168,8 @@ function MTGEditorPanel.Create()
             flow = "horizontal",
             valign = "top",
             vmargin = 8,
+
+            challengesArrow,
 
             gui.Label{
                 classes = { "tableLabel" },
@@ -945,8 +1182,7 @@ function MTGEditorPanel.Create()
             addChallengeButton,
         },
 
-        challengesPanel,
-        noChallengesLabel,
+        challengesBody,
     }
 
     local emptyLabel = gui.Label{
@@ -987,17 +1223,64 @@ function MTGEditorPanel.Create()
                 return
             end
 
-            nameInput.text = def.name or ""
-            descriptionInput.text = def:try_get("description", "")
-            moduleDropdown.idChosen = def.moduleId
-            settingsPanel.children = SettingBands(m_defid, def)
+            bound.defid = m_defid
+            bound.def = def
+
+            --An equal write still moves the caret, and the echo carries our own value.
+            local name = def.name or ""
+            if nameInput.text ~= name then
+                nameInput.text = name
+            end
+            local description = def:try_get("description", "")
+            if descriptionInput.text ~= description then
+                descriptionInput.text = description
+            end
+            if moduleDropdown.idChosen ~= def.moduleId then
+                moduleDropdown.idChosen = def.moduleId
+            end
+
+            local ladder = def.moduleId == MTGConstants.moduleBaseline
+            ladderSection:SetClass("collapsed", not ladder)
+            if ladder then
+                for _, rung in ipairs(MTGConstants.ladderRungs) do
+                    local input = ladderInputs[rung.id]
+                    local text = MTGDefinition.LadderText(def, rung.id)
+                    if input.text ~= text then
+                        input.text = text
+                    end
+                end
+
+                local shown = def:try_get("successLadderShown", false) == true
+                if m_ladderShown ~= shown then
+                    m_ladderShown = shown
+                    ladderEye:FireEvent("setIcon", cond(shown,
+                        "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"))
+                    ladderEye.tooltip = gui.Tooltip(cond(shown,
+                        "The table can read the ladder. Press to keep it back.",
+                        "Kept from the table. Press to show it."))
+                end
+            end
+
+            MTGWidgets.SetSlot(settingsSlot, m_defid .. "/" .. def.moduleId, function()
+                return SettingsForm(bound, def.moduleId)
+            end)
+            settingsSlot:FireEventTree("refreshSettings")
 
             local challenges = def:try_get("challenges", {})
-            local cards = {}
+            local items = {}
             for i, ch in ipairs(challenges) do
-                cards[#cards + 1] = ChallengeCard(m_defid, def, ch, i, m_cardExpanded)
+                items[i] = {
+                    defid = m_defid,
+                    moduleId = def.moduleId,
+                    ch = ch,
+                    index = i,
+                    total = #challenges,
+                }
             end
-            challengesPanel.children = cards
+            MTGWidgets.BindList(challengesPanel, items, function()
+                return ChallengeCard(m_cardExpanded)
+            end, "setChallenge")
+
             noChallengesLabel:SetClass("collapsed", #challenges > 0)
         end,
 
@@ -1011,4 +1294,3 @@ function MTGEditorPanel.Create()
 
     return resultPanel
 end
-

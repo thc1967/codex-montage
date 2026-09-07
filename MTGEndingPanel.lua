@@ -4,6 +4,38 @@ local mod = dmhub.GetModLoading()
 --- and the Victories handed out, and the celebration the whole table sees.
 MTGEndingPanel = {}
 
+--- One line of the report: a section's title or one of its entries. Built
+--- once as a slot and handed a line with `setLine`; the label inside is
+--- remade only when the line's kind or text moves, which after the ending is
+--- written is never.
+--- @return Panel
+local function ReportLine()
+    return MTGWidgets.Slot{
+        width = "100%",
+        --- @param line nil|{kind: string, text: string}
+        setLine = function(slot, line)
+            local state = ""
+            if line ~= nil then
+                state = line.kind .. "|" .. line.text
+            end
+            MTGWidgets.SetSlot(slot, state, function()
+                if line.kind == "header" then
+                    return MTGWidgets.SubHeader(line.text, "sizeXl")
+                end
+                return gui.Label{
+                    classes = { "sizeM", "noBold" },
+                    width = "100%",
+                    height = "auto",
+                    halign = "left",
+                    valign = "top",
+                    markdown = true,
+                    text = string.format("- %s", line.text),
+                }
+            end)
+        end,
+    }
+end
+
 --- The Director's summary. Lives in the montage dialog and reads the live Run,
 --- so the result can still be changed and the Victories awarded. Nothing has
 --- gone out to the table yet. The Victories, the journal check and Complete go
@@ -20,6 +52,8 @@ function MTGEndingPanel.Create(opts)
         flow = "vertical",
         valign = "top",
     }
+
+    local m_degreeText = nil
 
     local degreeLabel = gui.Label{
         classes = { "sizeL" },
@@ -44,6 +78,21 @@ function MTGEndingPanel.Create(opts)
                 end
             end
         end,
+    }
+
+    local m_ladderProse = nil
+
+    local ladderLine = gui.Label{
+        classes = { "sizeM", "noBold", "fgMuted", "collapsed" },
+        width = "100%",
+        height = "auto",
+        halign = "left",
+        valign = "top",
+        tmargin = 2,
+        bmargin = 4,
+        markdown = true,
+        textWrap = true,
+        text = "",
     }
 
     local trophyIcon = gui.Panel{
@@ -93,8 +142,6 @@ function MTGEndingPanel.Create(opts)
         end,
     }
 
-    --victoryInput and journalCheck stay locals so Complete can still read
-    --them from here.
     local victoryCell = gui.Panel{
         width = "auto",
         height = "auto",
@@ -108,8 +155,6 @@ function MTGEndingPanel.Create(opts)
         victoryInput,
     }
 
-    --These read the result rather than commit it, so they sit with the report
-    --between the degree picker and the tally, not down in the footer band.
     local endingControls = gui.Panel{
         classes = { cond(not director, "collapsed") },
         width = "100%",
@@ -131,8 +176,7 @@ function MTGEndingPanel.Create(opts)
         valign = "center",
         hover = gui.Tooltip("Award the Victories, announce the result, clear the montage"),
         click = function()
-            --Commit the field first: a value typed and never blurred has
-            --not reached the Run yet.
+            --A value typed and never blurred has not reached the Run yet.
             MTGRun.SetEndingVictories(tonumber(victoryInput.text) or 0)
             MTGRun.CompleteRun()
         end,
@@ -157,24 +201,15 @@ function MTGEndingPanel.Create(opts)
                 return
             end
 
-            local sections = {}
+            local lines = {}
             for _, section in ipairs(ending.sections or {}) do
-                sections[#sections + 1] = MTGWidgets.SubHeader(section.title or "", "sizeXl")
+                lines[#lines + 1] = { kind = "header", text = section.title or "" }
                 for _, entry in ipairs(section.entries or {}) do
-                    sections[#sections + 1] = gui.Label{
-                        classes = { "sizeM", "noBold" },
-                        width = "100%",
-                        height = "auto",
-                        halign = "left",
-                        valign = "top",
-                        markdown = true,
-                        text = string.format("- %s", entry),
-                    }
+                    lines[#lines + 1] = { kind = "entry", text = entry }
                 end
             end
-            reportPanel.children = sections
+            MTGWidgets.BindList(reportPanel, lines, ReportLine, "setLine")
 
-            --Only Baseline offers a reading the Director can overrule.
             local degree = ending.degree
             local options = {}
             for _, option in ipairs(ending.degreeOptions or {}) do
@@ -182,21 +217,39 @@ function MTGEndingPanel.Create(opts)
             end
 
             local picker = #options > 0 and director
-            degreeDropdown.options = options
+            if not dmhub.DeepEqual(degreeDropdown.options, options) then
+                degreeDropdown.options = options
+            end
             degreeDropdown:SetClass("collapsed", not picker)
-            if degree ~= nil then
+            if degree ~= nil and degreeDropdown.idChosen ~= degree.id then
                 degreeDropdown.idChosen = degree.id
             end
 
-            --The picker already reads out the result; a label beside it would
-            --just say the same thing twice.
+            --The picker already reads out the result.
             degreeLabel:SetClass("collapsed", degree == nil or picker)
             if degree ~= nil then
-                degreeLabel.text = string.format("**Result:** %s", degree.label or "")
+                local text = string.format("**Result:** %s", degree.label or "")
+                if m_degreeText ~= text then
+                    m_degreeText = text
+                    degreeLabel.text = text
+                end
             end
 
-            victoryInput.text = tostring(ending.victories or 0)
-            journalCheck.value = MTGRun.EndingWritesJournal(run)
+            local prose = degree ~= nil and MTGRun.LadderText(run, degree.id) or ""
+            ladderLine:SetClass("collapsed", prose == "")
+            if m_ladderProse ~= prose then
+                m_ladderProse = prose
+                ladderLine.text = prose
+            end
+
+            local victories = tostring(ending.victories or 0)
+            if victoryInput.text ~= victories then
+                victoryInput.text = victories
+            end
+            local write = MTGRun.EndingWritesJournal(run)
+            if journalCheck.value ~= write then
+                journalCheck.value = write
+            end
         end,
 
         create = function(element)
@@ -205,9 +258,9 @@ function MTGEndingPanel.Create(opts)
 
         degreeLabel,
         degreeDropdown,
+        ladderLine,
         endingControls,
 
-        --Takes whatever the heading, the picker and the victory row leave.
         gui.Panel{
             width = "100%",
             height = "100% available",
@@ -264,8 +317,23 @@ function MTGEndingPanel.CreateCelebration(payload)
         }
     end
 
-    --The tally the degree was judged on, small and under it: the degree says
-    --how it went, this says what it was scored from.
+    local ladder = payload.ladder or ""
+    if ladder ~= "" then
+        children[#children + 1] = gui.Label{
+            classes = { "sizeS", "fgMuted" },
+            interactable = false,
+            width = "100%",
+            height = "auto",
+            halign = "center",
+            valign = "top",
+            tmargin = 4,
+            markdown = true,
+            textAlignment = "center",
+            textWrap = true,
+            text = ladder,
+        }
+    end
+
     if #(payload.progress or {}) > 0 then
         local parts = {}
         for _, meter in ipairs(payload.progress) do
@@ -330,8 +398,6 @@ function MTGEndingPanel.CreateCelebration(payload)
         if row.bestTier ~= nil then
             lines[#lines + 1] = string.format("Best Tier %d", row.bestTier)
         end
-        --Every Challenge they moved, not just the one their best roll landed
-        --on: an assist that handed over an edge counts as much here as a lead.
         for _, name in ipairs(row.credits or {}) do
             lines[#lines + 1] = name
         end

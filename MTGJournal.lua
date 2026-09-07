@@ -152,8 +152,7 @@ local function BuildContent(run)
 
     add("")
 
-    --The montage's own description, as authored. It is markdown already, so it
-    --goes in whole rather than through Cell.
+    --Already markdown, so it bypasses Cell.
     local description = string.trim(run:try_get("description", ""))
     if description ~= "" then
         add(description)
@@ -184,8 +183,6 @@ local function BuildContent(run)
                         Cell(OutcomeText(run, inst, ch))))
                 end
 
-                --The assist is its own row under the lead it helped, set apart
-                --by italics rather than by a column of its own.
                 local assist = inst.assist
                 if assist ~= nil then
                     local p = MTGRun.Participant(run, assist.charid)
@@ -239,15 +236,12 @@ function MTGJournal.WriteResults(run)
         return
     end
 
-    --The record belongs to the Director. Only their client is meant to reach
-    --this, but the Complete button is merely hidden from players rather than
-    --gated, and a stray copy in a player's private tree would be nobody's.
+    --The Complete button is hidden from players, not gated, so guard the write.
     if not dmhub.isDM then
         return
     end
 
-    --Built now, placed later: the folder may not exist yet, and by the time it
-    --does the Run is gone.
+    --Built before the folder exists; by then the Run is gone.
     local title = run.name or "Montage"
     local content, annotations = BuildContent(run)
 
@@ -262,9 +256,7 @@ function MTGJournal.WriteResults(run)
         parentFolder = "private",
     }
 
-    --UploadNewDocumentFolder returns nothing and lands asynchronously, so give
-    --it a moment and look again. A folder that never arrives must not cost the
-    --Director the document: the private root will do.
+    --UploadNewDocumentFolder is async and returns nothing; the private root is the fallback.
     dmhub.Schedule(2, function()
         Place(title, content, annotations, FindFolder() or "private")
     end)

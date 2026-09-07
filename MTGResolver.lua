@@ -33,8 +33,7 @@ RollCheck.RegisterCustom{
             MTGConstants.modifierRollType,
             { attribute = check.info.attrid, skills = check.skills })
 
-        --Skilled is offered rather than applied: the pipeline cannot know the
-        --skill was chosen for this test, so proficiency is confirmed here.
+        --The pipeline cannot know the skill was chosen for this test.
         local skillsTable = GetTableCached("Skills")
         for _, skillid in ipairs(check.skills or {}) do
             local skill = skillsTable[skillid]
@@ -47,10 +46,7 @@ RollCheck.RegisterCustom{
             end
         end
 
-        --The grant crosses the wire as a plain id and becomes a modifier here,
-        --where the Lead's creature is in hand. Appending it raw would raise:
-        --the dialog reads `.modifier` off each entry, so it goes through the
-        --same wrapper sequence the engine uses.
+        --The dialog reads .modifier off each entry, so a raw id would raise.
         local grant = check.info.assistGrant
         if grant ~= nil and grant ~= "" then
             local options = { attribute = check.info.attrid, skills = check.skills }
@@ -84,15 +80,9 @@ RollCheck.RegisterCustom{
         return result
     end,
 
-    --Tiers ride on options, which is where the request dialog looks for them
-    --too. Built only when they are actually there: the power table reads
-    --#rollProperties.tiers, so handing it a table without them raises rather
-    --than degrading -- which is what a request sent by an older client, or by
-    --a rules module with no TierLabels, would otherwise do.
+    --The power table reads #tiers, so a table without them raises.
     ShowDialog = function(check, dialogOptions)
-        --A montage roll is read, not admired: the tier table and the modifiers
-        --have to be legible over whatever the map is showing. The frame's blur
-        --is what makes it see-through, so opacity alone would not do it.
+        --The frame's blur is what makes it see-through; opacity alone would not.
         dialogOptions.solidDialog = true
 
         local tiers = check:try_get("options", {}).tiers
@@ -144,19 +134,12 @@ local function SendRequest(run, ch, assignment, grant, grantFrom, role)
 
     local explanation = string.format("%s (%s)", title, attrName)
 
-    --The roll dialog reads its power table off options.tiers -- NOT info, which
-    --nothing looks at. Each module says what its own tiers mean, so Baseline
-    --answers with the outcomes for this Challenge's difficulty and T&O with its
-    --own three, and the player reads the real stakes before rolling.
+    --options.tiers, NOT info, is what the roll dialog reads.
     local rules = MTGRules.GetOrDefault(run.moduleId)
 
     local tiers = nil
     if role == "assist" then
-        --An assist never resolves the Challenge. It hands the Lead a grant and
-        --the tier picks which one, so the outcomes the module publishes are the
-        --wrong text entirely here. Read straight off AssistGrant, which is what
-        --the resolution then calls, and shared by every module through it.
-        --Three rows only: a critical buys nothing past the top tier.
+        --An assist hands the Lead a grant, so AssistGrant is the text, not the outcomes.
         tiers = {}
         for tier = 1, 3 do
             local grantId = rules.AssistGrant(tier)
@@ -192,10 +175,7 @@ local function SendRequest(run, ch, assignment, grant, grantFrom, role)
         tokens = { [assignment.charid] = {} },
     })
 
-    --The Director gets the game's own roll summary over the board, which is
-    --what brings Re-roll and Take Roll to a montage test. Its Proceed is what
-    --accepts the roll, so the resultTable is kept rather than discarded: Pump
-    --waits on it instead of on the roll completing.
+    --Proceed accepts the roll, so the resultTable is kept and Pump waits on it.
     local hud = actionId ~= nil and GameHud.instance or nil
     if hud then
         local resultTable = {}
@@ -222,11 +202,7 @@ function MTGResolver.Trigger(instanceId)
         return
     end
 
-    --One roll out at a time. Pump only ever services ResolvingInstance, which
-    --is the FIRST row holding a resolution, so a second request already sat
-    --unharvested until the first cleared; and the summary dialog is one shared
-    --panel, so a second would displace the first's and report itself
-    --cancelled, losing that roll. The card greys the other dice to match.
+    --One at a time: a second would displace the shared summary dialog and lose that roll.
     local busy = MTGRun.ResolvingInstance(run)
     if busy ~= nil and busy.id ~= instanceId then
         return
@@ -250,8 +226,7 @@ function MTGResolver.Trigger(instanceId)
         grantFrom = p ~= nil and p.name or nil
     end
 
-    --Players key their curtain off inst.resolution, so it has to land before
-    --the request goes out or the roll dialog beats it to the screen.
+    --Must land before the request, or the roll dialog beats the curtain to the screen.
     local startedAt = dmhub.serverTime
 
     MTGRun.SetResolution(instanceId, {
@@ -267,8 +242,7 @@ function MTGResolver.Trigger(instanceId)
         return
     end
 
-    --A fresh table, never the one the first write handed to the document:
-    --assigning that one back over itself does not carry the new field.
+    --A fresh table: assigning the document's own back over itself drops the new field.
     MTGRun.SetResolution(instanceId, {
         phase = slot .. "_roll",
         slot = slot,
@@ -282,8 +256,7 @@ end
 --- @param instanceId string
 --- @param actionId string|nil
 function MTGResolver.Cancel(instanceId, actionId)
-    --Dropped before the request goes, so the dialog's dying `result = false`
-    --is never read back against a request that no longer exists.
+    --Dropped first, so the dialog's dying result is not read against a live request.
     g_pending = nil
 
     if actionId ~= nil then
@@ -312,16 +285,12 @@ function MTGResolver.Pump()
 
     local res = inst.resolution
 
-    --Set but not yet stamped: in flight, not lost. The nil lookup below would
-    --otherwise read as "cleared out from under us" and wipe it.
+    --In flight, not lost: the nil lookup below would otherwise wipe it.
     if res.actionId == nil then
         return
     end
 
-    --Held before the request is read. Proceed cancels the request on its way
-    --out, so by the time this pump next runs the request is ALREADY GONE - and
-    --a missing request must not be read as an abandoned roll while an answer
-    --is waiting. That ordering is the whole reason this sits up here.
+    --Read first: Proceed has already cancelled the request, which must not read as abandoned.
     local answer = nil
     if g_pending ~= nil and g_pending.actionId == res.actionId then
         answer = g_pending.resultTable
@@ -331,18 +300,12 @@ function MTGResolver.Pump()
     local info = req ~= nil and req.info.tokens[res.actionFor] or nil
     local status = info ~= nil and info.status or nil
 
-    --A player who dismissed their own roll takes the request down with them,
-    --which closes the summary dialog too.
+    --A player dismissing their roll takes the request, and the dialog, down.
     if status == "cancel" then
         MTGResolver.Cancel(inst.id, res.actionId)
         return
     end
 
-    --Where the numbers come from, and whether it is time to take them. With a
-    --summary dialog up, the Director's Proceed is what accepts the roll: a
-    --completed roll sits there unrecorded so Re-roll and Take Roll still have
-    --a live request to act on, and so a roll about to be thrown away has not
-    --already moved the Run.
     local tokenInfo = nil
 
     if answer ~= nil then
@@ -353,20 +316,16 @@ function MTGResolver.Pump()
 
         g_pending = nil
 
-        --Cancelled while incomplete, or the dialog was dismissed. It dropped
-        --the request on its way out, so there is nothing left to cancel.
+        --The dialog dropped the request on its way out; nothing left to cancel.
         if answer.result ~= true or answer.action == nil then
             MTGRun.SetResolution(inst.id, nil)
             return
         end
 
-        --Snapshotted before the dialog cancelled the request, which is what
-        --makes this safe to read now.
+        --Snapshotted before the dialog cancelled the request.
         tokenInfo = answer.action.info.tokens[res.actionFor]
     else
-        --No dialog: a reload took it, or there was no hud to show one. Harvest
-        --on completion, as this pump always did, and treat a request cleared
-        --out from under us as never having been asked.
+        --No dialog: harvest on completion, and a vanished request was never asked.
         if req == nil then
             MTGRun.SetResolution(inst.id, nil)
             return
@@ -385,8 +344,7 @@ function MTGResolver.Pump()
         return
     end
 
-    --Tier comes from the numbers the request carries, not from the total
-    --alone: two edges bump the tier without moving it.
+    --Two edges bump the tier without moving the total.
     local rollInfo = {
         total = tokenInfo.result,
         naturalRoll = tokenInfo.naturalRoll,
@@ -411,8 +369,7 @@ function MTGResolver.Pump()
     local rules = MTGRules.GetOrDefault(run.moduleId)
     local outcome = rules.RollToOutcome(run, ch, rollInfo)
 
-    --A module may refuse to call it, in which case the row waits on a human
-    --rather than resolving.
+    --A module may refuse, leaving the row waiting on a human.
     if rules.PromptAfterRoll(run, ch, outcome) == nil then
         MTGRun.Adjudicate(inst.id, outcome)
     end
