@@ -6,11 +6,18 @@ local mod = dmhub.GetModLoading()
 --- @field name string
 --- @field isHero boolean
 --- @field included boolean
+--- @field isCompanion boolean a beastheart's companion, not a roster choice
+--- @field summonerId string|nil the charid a companion belongs to
 MTGParticipant = RegisterGameType("MTGParticipant")
 
 MTGParticipant.name = ""
 MTGParticipant.isHero = false
 MTGParticipant.included = true
+
+--- Absent on every participant stored before companions were carried, so both
+--- default rather than being read with try_get at each site.
+MTGParticipant.isCompanion = false
+MTGParticipant.summonerId = ""
 
 --- @param args nil|table
 --- @return MTGParticipant
@@ -95,71 +102,37 @@ function MTGRun.Mutate(description, fn)
     doc:CompleteChange(description)
 end
 
---- Characters eligible to be seeded into a Run: the default player party, plus
---- anyone handed to a specific player. Narrower than the combat launcher, which
---- also sweeps in the ally parties, and wider than the map, which only holds
---- whoever happens to be placed right now.
+--- Characters eligible to be seeded into a Run, on the map. Heroes first, then
+--- by name, with each beastheart companion tucked in directly behind the hero
+--- it belongs to -- the tray reads this order, and a companion beside its owner
+--- is how the Director thinks of the pair.
+---
+--- Companions are carried but are not a roster choice: they follow their hero,
+--- so the Setup screen leaves them out and only the tray shows them.
 --- @return MTGParticipant[]
 function MTGRun.EligibleParticipants()
+    local roster = THCUtils.PartyRoster{ placedOnly = true, includeCompanions = true }
+
+    local owned = {}
     local result = {}
-    local seen = {}
-    local partyId = GetDefaultPartyID()
 
-    local placed = {}
-    for _, token in ipairs(dmhub.allTokens) do
-        if token ~= nil and token.valid then
-            placed[token.charid] = true
-        end
-    end
-
-    --- @param charid string
-    --- @param inDefaultParty boolean
-    local function Consider(charid, inDefaultParty)
-        if charid == nil or seen[charid] then
-            return
-        end
-
-        local token = dmhub.GetCharacterById(charid)
-        if token == nil or token.properties == nil then
-            return
-        end
-
-        --playerControlled is true for party-shared tokens too; NotShared means a named owner.
-        if not inDefaultParty and token.playerControlledNotShared ~= true then
-            return
-        end
-
-        seen[charid] = true
-
-        local isHero = false
-        pcall(function()
-            isHero = token.properties:IsHero()
-        end)
-
-        result[#result + 1] = MTGParticipant.CreateNew{
-            charid = charid,
-            name = token.name or "",
-            isHero = isHero,
-            --Off the map is offered but not ticked; the Director opts them in.
-            included = placed[charid] == true,
+    for _, entry in ipairs(roster) do
+        local participant = MTGParticipant.CreateNew{
+            charid = entry.charid,
+            name = entry.name,
+            isHero = entry.isHero,
+            isCompanion = entry.isCompanion,
+            summonerId = entry.summonerId or "",
+            --Everyone eligible is on the map, so everyone starts ticked.
+            included = true,
         }
-    end
 
-    --Explicit, so a hidden player party still seeds.
-    for _, charid in ipairs(dmhub.GetCharacterIdsInParty(partyId) or {}) do
-        Consider(charid, true)
-    end
-
-    for pid, _ in unhidden_pairs(dmhub.GetTable(Party.tableName) or {}) do
-        for _, charid in ipairs(dmhub.GetCharacterIdsInParty(pid) or {}) do
-            Consider(charid, pid == partyId)
-        end
-    end
-
-    --Catches anyone assigned to a player but belonging to no party at all.
-    for _, token in ipairs(dmhub.allTokens) do
-        if token ~= nil and token.valid then
-            Consider(token.charid, token.partyId == partyId)
+        if entry.isCompanion then
+            local owner = entry.summonerId or ""
+            owned[owner] = owned[owner] or {}
+            table.insert(owned[owner], participant)
+        else
+            result[#result + 1] = participant
         end
     end
 
@@ -170,7 +143,18 @@ function MTGRun.EligibleParticipants()
         return string.lower(a.name) < string.lower(b.name)
     end)
 
-    return result
+    --Spliced after the sort, so a companion cannot be pulled away from its hero
+    --by its own name. A companion whose owner did not make the roster is
+    --dropped with it: it is only ever here on that hero's account.
+    local ordered = {}
+    for _, participant in ipairs(result) do
+        ordered[#ordered + 1] = participant
+        for _, companion in ipairs(owned[participant.charid] or {}) do
+            ordered[#ordered + 1] = companion
+        end
+    end
+
+    return ordered
 end
 
 --- Create a Run from a Definition and put it in Setup.
@@ -410,9 +394,23 @@ end
 --- @param run MTGRun
 --- @return MTGParticipant[]
 function MTGRun.ActiveParticipants(run)
+    local included = {}
+    for _, p in ipairs(run:try_get("participants", {})) do
+        if p.included ~= false and not p.isCompanion then
+            included[p.charid] = true
+        end
+    end
+
     local result = {}
     for _, p in ipairs(run:try_get("participants", {})) do
-        if p.included ~= false then
+        --A companion is never ticked or unticked in its own right; it is in
+        --play exactly when the hero it belongs to is.
+        local active = p.included ~= false
+        if p.isCompanion then
+            active = included[p.summonerId] == true
+        end
+
+        if active then
             result[#result + 1] = p
         end
     end
@@ -776,7 +774,7 @@ function MTGRun.DeriveCharacteristic(ch, charid)
     local best = ""
     local bestModifier = nil
     for _, attrId in ipairs(ch:try_get("allowedCharacteristics", {})) do
-        local modifier = MTGUtils.CharacteristicModifier(charid, attrId)
+        local modifier = THCUtils.CharacteristicModifier(charid, attrId)
         if modifier ~= nil and (bestModifier == nil or modifier > bestModifier) then
             best = attrId
             bestModifier = modifier

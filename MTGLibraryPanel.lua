@@ -395,7 +395,7 @@ local function CreateFolderBlock(onSelect, onRebuild)
 
             arrow:SetClass("expanded", not entry.closed)
             rows:SetClass("collapsed", entry.closed)
-            MTGWidgets.BindList(rows, entry.items, function()
+            THCWidgets.BindList(rows, entry.items, function()
                 return CreateRow(onSelect, 16)
             end, "setMontage")
         end,
@@ -509,7 +509,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                 return items
             end
 
-            MTGWidgets.BindList(rootRows, Items(byFolder[""], true), function()
+            THCWidgets.BindList(rootRows, Items(byFolder[""], true), function()
                 return CreateRow(Select, 0)
             end, "setMontage")
 
@@ -522,7 +522,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                     items = Items(byFolder[folder.id], not closed),
                 }
             end
-            MTGWidgets.BindList(folderBlocks, folders, function()
+            THCWidgets.BindList(folderBlocks, folders, function()
                 return CreateFolderBlock(Select, Rebuild)
             end, "setFolder")
 

@@ -359,7 +359,7 @@ end
 --- @param hint string|nil
 --- @return Panel
 local function CharacteristicsPicker(bound, hint)
-    local options = MTGUtils.CharacteristicOptions()
+    local options = THCUtils.CharacteristicOptions()
 
     return FormRow("Allowed Characteristics", "46%",
         gui.Multiselect{
@@ -368,7 +368,7 @@ local function CharacteristicsPicker(bound, hint)
             options = options,
             value = {},
             refreshForm = function(element)
-                local set = MTGUtils.ToSet(bound.ch:try_get("allowedCharacteristics", {}))
+                local set = THCUtils.ToSet(bound.ch:try_get("allowedCharacteristics", {}))
                 if not dmhub.DeepEqual(TickedSet(element.value), set) then
                     element.value = set
                 end
@@ -380,7 +380,7 @@ local function CharacteristicsPicker(bound, hint)
                     existing = current:try_get("allowedCharacteristics", {})
                 end
                 bound.store.SetCharacteristics(
-                    MTGUtils.MergeOrdered(element.value, existing, options))
+                    THCUtils.MergeOrdered(element.value, existing, options))
             end,
         }, hint)
 end
@@ -388,7 +388,7 @@ end
 --- @param bound MTGFormBinding
 --- @return Panel
 local function SkillsPicker(bound)
-    local options = MTGUtils.SkillOptions()
+    local options = THCUtils.SkillOptions()
 
     return FormRow("Allowed Skills", "46%",
         gui.Multiselect{
@@ -396,7 +396,7 @@ local function SkillsPicker(bound)
             options = options,
             value = {},
             refreshForm = function(element)
-                local set = MTGUtils.ToSet(bound.ch:try_get("allowedSkills", {}))
+                local set = THCUtils.ToSet(bound.ch:try_get("allowedSkills", {}))
                 if not dmhub.DeepEqual(TickedSet(element.value), set) then
                     element.value = set
                 end
@@ -1277,7 +1277,7 @@ function MTGEditorPanel.Create()
                     total = #challenges,
                 }
             end
-            MTGWidgets.BindList(challengesPanel, items, function()
+            THCWidgets.BindList(challengesPanel, items, function()
                 return ChallengeCard(m_cardExpanded)
             end, "setChallenge")
 

@@ -22,19 +22,6 @@ function MTGWidgets.ToneClass(tone)
     return "bgFg"
 end
 
---- @param text string
---- @param sizeClass nil|string overrides the default size
---- @return Panel
-function MTGWidgets.SubHeader(text, sizeClass)
-    return gui.Label{
-        classes = { "tableLabel", sizeClass or "sizeXs" },
-        width = "100%",
-        height = "auto",
-        valign = "top",
-        tmargin = 8,
-        text = text,
-    }
-end
 
 --- A participant token that can be dragged onto a slot. The drag props have
 --- to live on a panel we build: gui.CreateTokenImage makes its own panel and
@@ -103,87 +90,6 @@ function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
     }
 end
 
---- A hero's card in the closing report: their portrait over what they did.
---- No local styles table: one here would shadow the inherited ThemeEngine
---- cascade for the whole card, and every class below would stop resolving.
---- @param row table a MTGRun.BuildRecap entry
---- @param lines string[]
---- @return Panel
-function MTGWidgets.RecapCard(row, lines)
-    local token = dmhub.GetCharacterById(row.charid)
-
-    --"image" keeps the portrait true-colour; a bare bgimage is tinted @bg.
-    local portraitPanel = gui.Panel{
-        classes = { "image", "borderInfo" },
-        interactable = false,
-        flow = "none",
-        width = "100%",
-        height = "133.333% width",
-        halign = "center",
-        valign = "top",
-        borderWidth = 2,
-        cornerRadius = 4,
-    }
-
-    if token ~= nil then
-        local portrait = token.inspectPortrait
-        portraitPanel.bgimage = portrait
-        if token.hasSpineAnimation then
-            portraitPanel.selfStyle.imageRect = nil
-        else
-            portraitPanel.selfStyle.imageRect = token:GetPortraitRectForAspect(0.75, portrait)
-        end
-    end
-
-    local children = {
-        portraitPanel,
-
-        gui.Label{
-            classes = { "sizeL" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            tmargin = 6,
-            textAlignment = "center",
-            textWrap = true,
-            text = row.name or "",
-        },
-    }
-
-    for _, line in ipairs(lines) do
-        children[#children + 1] = gui.Label{
-            classes = { "sizeXs", "noBold", "fgMuted" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            tmargin = 2,
-            textAlignment = "center",
-            textWrap = true,
-            text = line,
-        }
-    end
-
-    return gui.Panel{
-        classes = { "panel", "surfaceRadial", "border" },
-        interactable = false,
-        flow = "vertical",
-        width = 168,
-        height = "auto",
-        minHeight = 300,
-        halign = "left",
-        valign = "top",
-        margin = 8,
-        cornerRadius = 8,
-        borderWidth = 1,
-        vpad = 10,
-        hpad = 8,
-        children = children,
-    }
-end
 
 --- The round's free participant tokens: everyone not currently standing on a
 --- test still in play. Anyone who already took a test this round is here too,
@@ -229,7 +135,7 @@ function MTGWidgets.Tray(onReturn)
         --- @param entries {p: MTGParticipant, dimmed: boolean}[]
         setTray = function(element, entries)
             emptyLabel:SetClass("collapsed", #entries > 0)
-            MTGWidgets.BindList(tokens, entries, function()
+            THCWidgets.BindList(tokens, entries, function()
                 return MTGWidgets.Slot{
                     setToken = function(slot, entry)
                         local state = ""
@@ -350,7 +256,7 @@ function MTGWidgets.Meter()
                     adjustable = adjustable,
                 }
             end
-            MTGWidgets.BindList(pipRow, pips, function()
+            THCWidgets.BindList(pipRow, pips, function()
                 return MTGWidgets.Slot{
                     setPip = function(slot, pip)
                         local state = ""
@@ -379,100 +285,7 @@ function MTGWidgets.Meter()
     }
 end
 
---- First of these keys the style actually carries. A style is userdata and
---- reading a key it does not have raises, so each one is probed.
---- @param style any
---- @return number
---- A curtain over whatever hosts it: dims it, swallows clicks, says why.
---- Collapsed until the caller shows it.
---- @param text string
---- @param sizeClass string
---- @param hostLevels nil|number how far up to measure; 1 (the parent) by default
---- @param inset nil|number the host's padding, which it does not expose
---- @return Panel
-function MTGWidgets.Overlay(text, sizeClass, hostLevels, inset)
-    hostLevels = hostLevels or 1
-    inset = inset or 0
 
-    return gui.Panel{
-        classes = { "bordered", "collapsed" },
-        floating = true,
-        width = "100%",
-        height = "100%",
-        halign = "left",
-        valign = "top",
-        flow = "none",
-        bgimage = true,
-        bgcolor = "#000000c0",
-
-        --Stops the raycast reaching the controls underneath.
-        interactable = true,
-
-        --A content-sized host resolves no percentage, and renderedHeight is 0 before layout.
-        thinkTime = 0.2,
-        think = function(element)
-            if element:HasClass("collapsed") then
-                return
-            end
-
-            --Reading off a destroyed panel raises.
-            local host = element
-            for _ = 1, hostLevels do
-                if host == nil or not host.valid then
-                    return
-                end
-                host = host.parent
-            end
-            if host == nil or not host.valid then
-                return
-            end
-
-            local w = host.renderedWidth
-            local h = host.renderedHeight
-            if w ~= nil and w > 0 and h ~= nil and h > 0 then
-                --Rendered size includes the host's padding; children start inside it.
-                element.selfStyle.width = w
-                element.selfStyle.height = h
-                element.x = -inset
-                element.y = -inset
-            end
-        end,
-
-        gui.Label{
-            classes = { sizeClass, "bold" },
-            width = "90%",
-            height = "auto",
-            halign = "center",
-            valign = "center",
-            textAlignment = "center",
-            textWrap = true,
-            text = text,
-        },
-    }
-end
-
---- Hand a list of items to a container's children, one panel per item in
---- order, the way the downtime sheet hands each project panel its project.
---- A panel is built only when the list has outgrown the container; one past
---- the end of the list is handed nil, collapses, and waits for the list to
---- grow again. The event carries (item, index); a handler that gets nil
---- collapses its panel and returns.
---- @param container Panel
---- @param items any[]
---- @param build fun(index: number): Panel an unbound panel for that position
---- @param bindEvent string
-function MTGWidgets.BindList(container, items, build, bindEvent)
-    local panels = container.children or {}
-    if #panels < #items then
-        for i = #panels + 1, #items do
-            panels[i] = build(i)
-        end
-        container.children = panels
-    end
-    for i, panel in ipairs(panels) do
-        panel:FireEvent(bindEvent, items[i], i)
-    end
-end
 
 --- A kept panel holding one control that is remade only when its state
 --- moves: an icon that flips, a token portrait, a block whose shape changes.

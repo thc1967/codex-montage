@@ -270,7 +270,7 @@ function MTGRunPanel.Create(opts)
                 if item.inst.assist ~= nil then
                     entries[#entries + 1] = { p = item.inst.assist, lead = false }
                 end
-                MTGWidgets.BindList(tokens, entries, function()
+                THCWidgets.BindList(tokens, entries, function()
                     return MTGWidgets.Slot{
                         setToken = function(slot, entry)
                             local state = ""
@@ -514,7 +514,7 @@ function MTGRunPanel.Create(opts)
                         end)
                 end)
 
-                MTGWidgets.BindList(cards, entry.items, function()
+                THCWidgets.BindList(cards, entry.items, function()
                     return MTGChallengeCard.Create(director, m_cardExpanded)
                 end, "setRow")
             end,
@@ -558,7 +558,7 @@ function MTGRunPanel.Create(opts)
             trayPanel:SetClass("collapsed", reviewing)
             finalizingLabel:SetClass("collapsed", not reviewing)
             if reviewing then
-                MTGWidgets.BindList(summaryPanel, SummaryItems(run), SummaryRow, "setSummary")
+                THCWidgets.BindList(summaryPanel, SummaryItems(run), SummaryRow, "setSummary")
             end
 
             if pauseButton ~= nil then
@@ -572,7 +572,7 @@ function MTGRunPanel.Create(opts)
                 descriptionLabel:SetClass("collapsed", description == "")
             end
 
-            MTGWidgets.BindList(metersPanel, MTGRun.Meters(), MTGWidgets.Meter, "setMeter")
+            THCWidgets.BindList(metersPanel, MTGRun.Meters(), MTGWidgets.Meter, "setMeter")
 
             --Re-asserted, not reset: a document write must not snap an opened ladder shut.
             local showLadder = run.moduleId == MTGConstants.moduleBaseline
@@ -681,7 +681,7 @@ function MTGRunPanel.Create(opts)
                 }
             end
 
-            MTGWidgets.BindList(boardPanel, sections, BuildSection, "setRound")
+            THCWidgets.BindList(boardPanel, sections, BuildSection, "setRound")
 
             local free = MTGRun.TrayParticipants(run, run.round or 1)
             local tokens = {}

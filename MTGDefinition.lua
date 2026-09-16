@@ -169,267 +169,83 @@ end
 
 mod:RegisterDocumentForCheckpointBackups(MTGConstants.libraryDoc)
 
+--- The filing cabinet itself lives in THCCore; what is montage-specific is the
+--- noun on an undo entry and the defaults a new montage starts with.
+local g_library = THCLibrary.CreateNew{
+    mod = mod,
+    docId = MTGConstants.libraryDoc,
+    noun = "montage",
+    defaultName = "New Montage",
+    CreateDefinition = function(name)
+        return MTGDefinition.CreateNew{
+            name = name,
+            moduleId = MTGConstants.moduleBaseline,
+        }
+    end,
+}
+
 --- @return LuaCodeModDocumentSnapshot
-function MTGDefinition.Doc()
-    return mod:GetDocumentSnapshot(MTGConstants.libraryDoc)
-end
+function MTGDefinition.Doc() return g_library:Doc() end
 
 --- @return string monitorGame path for the library
-function MTGDefinition.DocPath()
-    return mod:GetDocumentPath(MTGConstants.libraryDoc)
-end
+function MTGDefinition.DocPath() return g_library:DocPath() end
 
 --- Mutate the library inside one document change.
 --- @param description string
 --- @param fn fun(definitions: table<string, MTGDefinition>)
-function MTGDefinition.Mutate(description, fn)
-    local doc = MTGDefinition.Doc()
-    doc:BeginChange()
-    if doc.data.definitions == nil then
-        doc.data.definitions = {}
-    end
-    fn(doc.data.definitions)
-    doc:CompleteChange(description)
-end
+function MTGDefinition.Mutate(description, fn) g_library:Mutate(description, fn) end
 
---- @return table<string, MTGDefinition>
-local function Definitions()
-    local doc = MTGDefinition.Doc()
-    if doc == nil or doc.data == nil then
-        return {}
-    end
-    return doc.data.definitions or {}
-end
-
---- Folders are a Director's filing cabinet and nothing else: no montage
---- behaves differently for being in one, and nothing outside this panel reads
---- them. Single level, sorted by name, and a folder holding montages cannot
---- be deleted.
 --- @return {id: string, name: string}[] sorted by name
-function MTGDefinition.GetFolders()
-    local doc = MTGDefinition.Doc()
-    local folders = doc ~= nil and doc.data ~= nil and doc.data.folders or {}
-
-    local result = {}
-    for id, folder in pairs(folders) do
-        result[#result + 1] = { id = id, name = folder.name or "" }
-    end
-    table.sort(result, function(a, b)
-        local an, bn = string.lower(a.name), string.lower(b.name)
-        if an == bn then
-            return a.id < b.id
-        end
-        return an < bn
-    end)
-    return result
-end
-
---- @param description string
---- @param fn fun(folders: table)
-local function MutateFolders(description, fn)
-    local doc = MTGDefinition.Doc()
-    doc:BeginChange()
-    if doc.data.folders == nil then
-        doc.data.folders = {}
-    end
-    fn(doc.data.folders)
-    doc:CompleteChange(description)
-end
+function MTGDefinition.GetFolders() return g_library:GetFolders() end
 
 --- @return string id of the new folder
-function MTGDefinition.CreateFolder()
-    local id = dmhub.GenerateGuid()
-    MutateFolders("New montage folder", function(folders)
-        folders[id] = { id = id, name = "New Folder" }
-    end)
-    return id
-end
+function MTGDefinition.CreateFolder() return g_library:CreateFolder() end
 
 --- @param id string
 --- @param name string
-function MTGDefinition.RenameFolder(id, name)
-    MutateFolders("Rename montage folder", function(folders)
-        local folder = folders[id]
-        if folder ~= nil and folder.name ~= name then
-            folder.name = name
-        end
-    end)
-end
+function MTGDefinition.RenameFolder(id, name) g_library:RenameFolder(id, name) end
 
---- Montages in a folder are the reason to keep it, so an occupied folder
---- stays. Emptying it is the Director's decision, not a side effect.
 --- @param id string
 --- @return boolean whether it went
-function MTGDefinition.DeleteFolder(id)
-    for _, def in ipairs(MTGDefinition.GetAll()) do
-        if def:try_get("folderId", "") == id then
-            return false
-        end
-    end
-
-    MutateFolders("Delete montage folder", function(folders)
-        folders[id] = nil
-    end)
-    return true
-end
+function MTGDefinition.DeleteFolder(id) return g_library:DeleteFolder(id) end
 
 --- @param defid string
 --- @param folderId string empty for the root
-function MTGDefinition.SetFolder(defid, folderId)
-    MTGDefinition.Mutate("Move montage", function(defs)
-        local def = defs[defid]
-        if def ~= nil then
-            def.folderId = folderId or ""
-        end
-    end)
-end
+function MTGDefinition.SetFolder(defid, folderId) g_library:SetFolder(defid, folderId) end
 
 --- @return MTGDefinition[] sorted by name, then id
-function MTGDefinition.GetAll()
-    local result = {}
-    for id, def in pairs(Definitions()) do
-        def.id = id
-        result[#result + 1] = def
-    end
-    table.sort(result, function(a, b)
-        local an, bn = string.lower(a.name or ""), string.lower(b.name or "")
-        if an == bn then
-            return a:GetID() < b:GetID()
-        end
-        return an < bn
-    end)
-    return result
-end
+function MTGDefinition.GetAll() return g_library:GetAll() end
 
 --- @param id string
 --- @return MTGDefinition|nil
-function MTGDefinition.GetByID(id)
-    if id == nil or id == "" then
-        return nil
-    end
-    return Definitions()[id]
-end
-
---- The readable half of a slug: lowercased, every run of non-alphanumerics
---- collapsed to one dash, ends trimmed.
---- @param name nil|string
---- @return string
-local function Slugify(name)
-    local s = string.lower(trim(name or ""))
-    s = string.gsub(s, "[^%w]+", "-")
-    s = string.gsub(s, "^%-+", "")
-    s = string.gsub(s, "%-+$", "")
-    if s == "" then
-        s = "montage"
-    end
-    return s
-end
-
---- This name's slug, disambiguated against every OTHER montage's. Takes the
---- library table rather than reading it back, because it runs inside a
---- mutation - and because the -2 suffix has to be settled against one view of
---- the library. Derived at read time it would ride on pairs() order, and two
---- montages sharing a name could swap suffixes between calls.
---- @param defs table the whole library, mid-mutation
---- @param id string the montage being named
---- @param name nil|string
---- @return string
-local function UniqueSlug(defs, id, name)
-    local base = Slugify(name)
-
-    local taken = {}
-    for otherId, def in pairs(defs) do
-        if otherId ~= id and type(def) == "table" then
-            local slug = def.slug
-            if type(slug) == "string" and slug ~= "" then
-                taken[slug] = true
-            end
-        end
-    end
-
-    if not taken[base] then
-        return base
-    end
-
-    local counter = 1
-    while true do
-        counter = counter + 1
-        local candidate = string.format("%s-%d", base, counter)
-        if not taken[candidate] then
-            return candidate
-        end
-    end
-end
+function MTGDefinition.GetByID(id) return g_library:GetByID(id) end
 
 --- @param name nil|string
 --- @return string id
-function MTGDefinition.CreateInLibrary(name)
-    local def = MTGDefinition.CreateNew{
-        name = name or "New Montage",
-        moduleId = MTGConstants.moduleBaseline,
-    }
-    MTGDefinition.Mutate("Create montage", function(defs)
-        defs[def:GetID()] = def
-        def.slug = UniqueSlug(defs, def:GetID(), def.name)
-    end)
-    return def:GetID()
-end
+function MTGDefinition.CreateInLibrary(name) return g_library:CreateInLibrary(name) end
 
---- The montage carrying this slug, or nil.
 --- @param slug string
 --- @return MTGDefinition|nil
-function MTGDefinition.GetBySlug(slug)
-    if type(slug) ~= "string" or slug == "" then
-        return nil
-    end
-    for _, def in ipairs(MTGDefinition.GetAll()) do
-        if def.slug == slug then
-            return def
-        end
-    end
-    return nil
-end
+function MTGDefinition.GetBySlug(slug) return g_library:GetBySlug(slug) end
 
---- This montage's slug, stamping one first if it predates the field. Saves
---- every caller having to cope with an empty string.
 --- @param id string
 --- @return string
-function MTGDefinition.EnsureSlug(id)
-    local def = MTGDefinition.GetByID(id)
-    if def == nil then
-        return ""
-    end
-    if def.slug ~= "" then
-        return def.slug
-    end
-
-    MTGDefinition.Mutate("Assign montage slug", function(defs)
-        local target = defs[id]
-        if target ~= nil and target.slug == "" then
-            target.slug = UniqueSlug(defs, id, target.name)
-        end
-    end)
-
-    local stamped = MTGDefinition.GetByID(id)
-    return stamped ~= nil and stamped.slug or ""
-end
+function MTGDefinition.EnsureSlug(id) return g_library:EnsureSlug(id) end
 
 --- @param id string
 --- @return string|nil id of the copy
-function MTGDefinition.Duplicate(id)
-    local source = MTGDefinition.GetByID(id)
-    if source == nil then
-        return nil
-    end
-    local copy = DeepCopy(source)
-    copy.id = dmhub.GenerateGuid()
-    copy.name = string.format("%s (copy)", source.name or "Montage")
-    MTGDefinition.Mutate("Duplicate montage", function(defs)
-        defs[copy.id] = copy
-        copy.slug = UniqueSlug(defs, copy.id, copy.name)
-    end)
-    return copy.id
-end
+function MTGDefinition.Duplicate(id) return g_library:Duplicate(id) end
+
+--- @param id string
+function MTGDefinition.Delete(id) g_library:Delete(id) end
+
+--- Exposed because renaming and importing both re-derive a slug from inside
+--- their own mutation, where the library table is already in hand.
+--- @param defs table the whole library, mid-mutation
+--- @param id string
+--- @param name nil|string
+--- @return string
+function MTGDefinition.UniqueSlug(defs, id, name) return g_library:UniqueSlug(defs, id, name) end
 
 --- @param id string
 --- @param description string markdown shown to the table while the Run plays
@@ -487,17 +303,12 @@ function MTGDefinition.Rename(id, name)
             def.name = name
 
             --A rename re-derives the slug; old slugs stop resolving by choice.
-            def.slug = UniqueSlug(defs, id, name)
+            def.slug = MTGDefinition.UniqueSlug(defs, id, name)
         end
     end)
 end
 
 --- @param id string
-function MTGDefinition.Delete(id)
-    MTGDefinition.Mutate("Delete montage", function(defs)
-        defs[id] = nil
-    end)
-end
 
 --- @param def MTGDefinition
 --- @param challengeId string
@@ -903,8 +714,8 @@ local function ImportChallenge(entry, rules, moduleId, messages)
     }
 
     ch.allowedCharacteristics = ResolveIds(entry.characteristics,
-        MTGUtils.CharacteristicOptions(), "characteristic", messages)
-    ch.allowedSkills = ResolveIds(entry.skills, MTGUtils.SkillOptions(), "skill", messages)
+        THCUtils.CharacteristicOptions(), "characteristic", messages)
+    ch.allowedSkills = ResolveIds(entry.skills, THCUtils.SkillOptions(), "skill", messages)
 
     for _, field in ipairs(rules.ChallengeFields()) do
         local value = entry[field.id]
@@ -1032,7 +843,7 @@ function MTGDefinition.ImportFromJson(text)
 
     MTGDefinition.Mutate("Import montage", function(defs)
         defs[def:GetID()] = def
-        def.slug = UniqueSlug(defs, def:GetID(), def.name)
+        def.slug = MTGDefinition.UniqueSlug(defs, def:GetID(), def.name)
     end)
 
     return { ok = true, defid = def:GetID(), name = name, messages = messages }

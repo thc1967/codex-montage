@@ -20,7 +20,7 @@ local function ReportLine()
             end
             MTGWidgets.SetSlot(slot, state, function()
                 if line.kind == "header" then
-                    return MTGWidgets.SubHeader(line.text, "sizeXl")
+                    return THCWidgets.SubHeader(line.text, "sizeXl")
                 end
                 return gui.Label{
                     classes = { "sizeM", "noBold" },
@@ -208,7 +208,7 @@ function MTGEndingPanel.Create(opts)
                     lines[#lines + 1] = { kind = "entry", text = entry }
                 end
             end
-            MTGWidgets.BindList(reportPanel, lines, ReportLine, "setLine")
+            THCWidgets.BindList(reportPanel, lines, ReportLine, "setLine")
 
             local degree = ending.degree
             local options = {}
@@ -289,51 +289,9 @@ end
 --- @return Panel
 function MTGEndingPanel.CreateCelebration(payload)
     local ending = payload.ending or {}
-    local victories = ending.victories or 0
 
-    local children = {
-        gui.Label{
-            classes = { "modalTitle", "sizeXxl" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            textAlignment = "center",
-            text = payload.name or "Montage",
-        },
-    }
-
-    if ending.degree ~= nil then
-        children[#children + 1] = gui.Label{
-            classes = { "sizeXl", "fgMuted" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            textAlignment = "center",
-            text = ending.degree.label or "",
-        }
-    end
-
-    local ladder = payload.ladder or ""
-    if ladder ~= "" then
-        children[#children + 1] = gui.Label{
-            classes = { "sizeS", "fgMuted" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            tmargin = 4,
-            markdown = true,
-            textAlignment = "center",
-            textWrap = true,
-            text = ladder,
-        }
-    end
-
+    --One line of "3 Successes  |  1 Failure", or nothing when no meter moved.
+    local stats = ""
     if #(payload.progress or {}) > 0 then
         local parts = {}
         for _, meter in ipairs(payload.progress) do
@@ -341,103 +299,32 @@ function MTGEndingPanel.CreateCelebration(payload)
             parts[#parts + 1] = string.format("%d %s", value,
                 cond(value == 1, meter.labelOne or meter.label or "", meter.label or ""))
         end
-
-        children[#children + 1] = gui.Label{
-            classes = { "sizeS", "fgMuted" },
-            interactable = false,
-            width = "100%",
-            height = "auto",
-            halign = "center",
-            valign = "top",
-            tmargin = 2,
-            textAlignment = "center",
-            text = table.concat(parts, "  |  "),
-        }
+        stats = table.concat(parts, "  |  ")
     end
 
-    children[#children + 1] = gui.Panel{
-        interactable = false,
-        width = "auto",
-        height = "auto",
-        flow = "horizontal",
-        halign = "center",
-        valign = "top",
-        vmargin = 12,
+    return THCWidgets.Celebration{
+        title = payload.name or "Montage",
+        subtitle = ending.degree ~= nil and ending.degree.label or "",
+        detail = payload.ladder or "",
+        stats = stats,
+        victories = ending.victories or 0,
+        icon = MTGConstants.iconVictory,
+        recap = payload.recap,
 
-        gui.Panel{
-            classes = { "image" },
-            interactable = false,
-            width = 48,
-            height = 48,
-            halign = "left",
-            valign = "center",
-            rmargin = 10,
-            bgimage = MTGConstants.iconVictory,
-        },
-
-        gui.Label{
-            classes = { "sizeXxl" },
-            interactable = false,
-            width = "auto",
-            height = "auto",
-            halign = "left",
-            valign = "center",
-            text = string.format("%d %s", victories,
-                cond(victories == 1, "Victory", "Victories")),
-        },
-    }
-
-    local cards = {}
-    for _, row in ipairs(payload.recap or {}) do
-        local lines = {}
-        if row.led > 0 or row.assisted > 0 then
-            lines[#lines + 1] = string.format("Led %d  |  Assisted %d", row.led, row.assisted)
-        else
-            lines[#lines + 1] = "Stood by"
-        end
-        if row.bestTier ~= nil then
-            lines[#lines + 1] = string.format("Best Tier %d", row.bestTier)
-        end
-        for _, name in ipairs(row.credits or {}) do
-            lines[#lines + 1] = name
-        end
-        cards[#cards + 1] = MTGWidgets.RecapCard(row, lines)
-    end
-
-    children[#children + 1] = gui.Panel{
-        interactable = false,
-        width = "auto",
-        maxWidth = "100%",
-        height = "auto",
-        flow = "horizontal",
-        wrap = true,
-        halign = "center",
-        valign = "top",
-        children = cards,
-    }
-
-    children[#children + 1] = gui.Button{
-        classes = { "sizeM" },
-        width = 140,
-        height = 36,
-        text = "Close",
-        halign = "center",
-        valign = "top",
-        vmargin = 16,
-        click = function(element)
-            local view = element:FindParentWithClass("mtgPlayerView")
-            if view ~= nil then
-                view:DestroySelf()
+        RecapLines = function(row)
+            local lines = {}
+            if row.led > 0 or row.assisted > 0 then
+                lines[#lines + 1] = string.format("Led %d  |  Assisted %d", row.led, row.assisted)
+            else
+                lines[#lines + 1] = "Stood by"
             end
+            if row.bestTier ~= nil then
+                lines[#lines + 1] = string.format("Best Tier %d", row.bestTier)
+            end
+            for _, name in ipairs(row.credits or {}) do
+                lines[#lines + 1] = name
+            end
+            return lines
         end,
-    }
-
-    return gui.Panel{
-        width = "80%",
-        height = "auto",
-        flow = "vertical",
-        halign = "center",
-        valign = "center",
-        children = children,
     }
 end

@@ -312,27 +312,7 @@ end
 --- nothing to watch. No footer.
 --- @return Panel
 function MTGDialog.CreatePlayerView()
-    local function Notice(message)
-        return gui.Panel{
-            classes = { "collapsed" },
-            width = "100%",
-            height = "100% available",
-            flow = "vertical",
-            halign = "center",
-            valign = "center",
-
-            gui.Label{
-                classes = { "sizeL", "noBold", "fgMuted" },
-                width = "80%",
-                height = "auto",
-                halign = "center",
-                valign = "center",
-                textAlignment = "center",
-                textWrap = true,
-                text = message,
-            },
-        }
-    end
+    local Notice = THCWidgets.Notice
 
     --- A board worth showing: running, and not paused.
     --- @param run nil|MTGRun
@@ -369,9 +349,8 @@ function MTGDialog.CreatePlayerView()
         idleBody:SetClass("collapsed", run ~= nil)
     end
 
-    --mtgPlayerView is a marker: the celebration's Close button finds its host by it.
     local dlg = DialogShell.CreateNew{
-        classes = { "mtgPlayerView", "launchablePanel" },
+        classes = { "launchablePanel" },
         title = MTGConstants.playerPanelTitle,
         subtitle = RunHeaderInfo(),
         width = MTGConstants.playerWindowWidth,
@@ -412,53 +391,7 @@ end
 --- @param report table
 --- @return Panel
 local function CreateCelebrationOverlay(report)
-    local resultPanel
-    resultPanel = gui.Panel{
-        styles = ThemeEngine.GetStyles(),
-        classes = { "mtgPlayerView" },
-        floating = true,
-        flow = "none",
-        width = "100%",
-        height = "100%",
-        halign = "center",
-        valign = "center",
-        --interactable=false on a parent blocks its whole subtree.
-        interactable = true,
-
-        --Not a DialogShell, so the theme subscription is held by hand.
-        data = {
-            themeSub = nil,
-        },
-
-        create = function(element)
-            element.data.themeSub = ThemeEngine.OnThemeChanged(mod, function()
-                if element.valid then
-                    element.styles = ThemeEngine.GetStyles()
-                end
-            end)
-        end,
-
-        destroy = function(element)
-            if element.data.themeSub ~= nil then
-                element.data.themeSub:Deregister()
-                element.data.themeSub = nil
-            end
-        end,
-
-        gui.Panel{
-            interactable = false,
-            width = "100%",
-            height = "100%",
-            halign = "center",
-            valign = "center",
-            bgimage = "panels/square.png",
-            bgcolor = "#000000d0",
-        },
-
-        MTGEndingPanel.CreateCelebration(report),
-    }
-
-    return resultPanel
+    return THCWidgets.CelebrationOverlay(MTGEndingPanel.CreateCelebration(report))
 end
 
 --- The Director presenting to the table, arriving on a player's client. The
@@ -508,42 +441,10 @@ LaunchablePanel.Register{
     end,
 }
 
-if dmhub.isDM then
-    Commands.RegisterMacro{
-        name = "thcmontage",
-        summary = "open the montage panel",
-        doc = "Usage: /thcmontage [slug]\nOpens the Montage panel. Given a slug, selects that montage.",
-
-            --Not EnsureSlug: completions run per keystroke and must not write.
-        completions = function(args, argIndex)
-            if argIndex ~= 1 then
-                return {}
-            end
-
-            local result = {}
-            for _, def in ipairs(MTGDefinition.GetAll()) do
-                if def.slug ~= "" then
-                    result[#result + 1] = { text = def.slug, summary = def.name or "" }
-                end
-            end
-            table.sort(result, function(a, b) return a.text < b.text end)
-            return result
-        end,
-
-        command = function(str)
-            local slug = trim(str or "")
-            local defid = nil
-
-            if slug ~= "" then
-                local def = MTGDefinition.GetBySlug(slug)
-                if def ~= nil then
-                    defid = def:GetID()
-                else
-                    dmhub.Log(string.format("thcmontage: no montage with slug \"%s\".", slug))
-                end
-            end
-
-            MTGDialog.Open(defid)
-        end,
-    }
-end
+THCCommands.RegisterSlugMacro{
+    name = "thcmontage",
+    noun = "montage",
+    GetAll = MTGDefinition.GetAll,
+    GetBySlug = MTGDefinition.GetBySlug,
+    Open = MTGDialog.Open,
+}

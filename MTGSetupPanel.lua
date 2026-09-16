@@ -167,7 +167,7 @@ end
 local function RoundGroup()
     local shown = {}
 
-    local header = MTGWidgets.SubHeader("")
+    local header = THCWidgets.SubHeader("")
 
     local rows = gui.Panel{
         width = "100%",
@@ -194,7 +194,7 @@ local function RoundGroup()
                 shown.text = text
                 header.text = text
             end
-            MTGWidgets.BindList(rows, group.items, ChallengeRow, "setChallenge")
+            THCWidgets.BindList(rows, group.items, ChallengeRow, "setChallenge")
         end,
 
         header,
@@ -336,13 +336,18 @@ function MTGSetupPanel.Create()
             end)
             settingsSlot:FireEventTree("refreshSettings")
 
+            --Companions are left out: they follow the hero they belong to, so
+            --there is nothing here for the Director to decide. The tray shows
+            --them once play starts.
             local roster = {}
             for i, p in ipairs(run:try_get("participants", {})) do
-                roster[i] = { p = p, index = i }
+                if not p.isCompanion then
+                    roster[#roster + 1] = { p = p, index = i }
+                end
             end
-            MTGWidgets.BindList(rosterPanel, roster, ParticipantRow, "setParticipant")
+            THCWidgets.BindList(rosterPanel, roster, ParticipantRow, "setParticipant")
 
-            MTGWidgets.BindList(challengesPanel, ChallengeGroups(run), RoundGroup, "setGroup")
+            THCWidgets.BindList(challengesPanel, ChallengeGroups(run), RoundGroup, "setGroup")
         end,
 
         create = function(element)

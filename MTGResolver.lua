@@ -1,101 +1,30 @@
 local mod = dmhub.GetModLoading()
 
---- Asks a Participant's player for a test and harvests the result.
+--- Asks a Participant's player for a test and harvests the result. The
+--- conversation itself -- request, summary dialog, reading the answer back --
+--- is THCRoll's; what stays here is which roll a row still needs and what the
+--- montage does with the result.
 MTGResolver = {}
 
---- The Director's answer for the request now out, or nil. Client-local by
---- nature: the resultTable belongs to their own summary dialog, and only their
---- client harvests. A reload drops it, which Pump reads as the dialog never
---- having been there and falls back to harvesting on completion.
---- One value, not a table keyed by row: Trigger admits only one roll at a time.
---- @type nil|{actionId: string, resultTable: table}
-local g_pending = nil
-
---- The player-facing roll. Two independent axes meet here: `rollType` picks
---- the dialog, while GetModifiers passes a type from the modifier pipeline's
---- own closed vocabulary. A private id on that second axis silently drops
---- every Tests-scoped modifier, Skilled included.
-RollCheck.RegisterCustom{
+--- The player-facing roll. Only the assist grant is ours; THCRoll supplies the
+--- rest of the check.
+THCRoll.RegisterCheck{
     id = MTGConstants.rollCheckId,
-    rollType = "power_roll_custom",
+    modifierRollType = MTGConstants.modifierRollType,
 
-    Describe = function(check, isplayer)
-        return check.info.explanation
-    end,
-
-    GetRoll = function(check, creature)
-        return "2d10 + " .. creature:AttributeMod(check.info.attrid)
-    end,
-
-    GetModifiers = function(check, creature)
-        local result = creature:GetModifiersForPowerRoll(
-            check:GetRoll(creature),
-            MTGConstants.modifierRollType,
-            { attribute = check.info.attrid, skills = check.skills })
-
-        --The pipeline cannot know the skill was chosen for this test.
-        local skillsTable = GetTableCached("Skills")
-        for _, skillid in ipairs(check.skills or {}) do
-            local skill = skillsTable[skillid]
-            if skill ~= nil and creature:ProficientInSkill(skill) then
-                for _, entry in ipairs(result) do
-                    if entry.modifier.name == "Skilled" then
-                        entry.hint.result = true
-                    end
-                end
-            end
-        end
-
-        --The dialog reads .modifier off each entry, so a raw id would raise.
+    DecorateModifiers = function(check, creature, options, result)
         local grant = check.info.assistGrant
-        if grant ~= nil and grant ~= "" then
-            local options = { attribute = check.info.attrid, skills = check.skills }
-            local m = CharacterModifier.new{
-                behavior = "power",
-                rollType = MTGConstants.modifierRollType,
-                modtype = grant,
-                activationCondition = true,
-                guid = dmhub.GenerateGuid(),
-                name = check.info.assistName or "Assisted",
-                description = check.info.assistDescription or "An ally assisted this test.",
-                keywords = {},
-            }
-
-            local entry = { mod = m }
-            local described = m:DescribeModifyPowerRoll(entry, creature,
-                MTGConstants.modifierRollType, options)
-            if described ~= nil then
-                described.hint = described.modifier:HintModifyPowerRolls(entry, creature,
-                    MTGConstants.modifierRollType, options)
-                if described.hint ~= nil then
-                    result[#result + 1] = described
-                end
-            end
+        if grant == nil or grant == "" then
+            return
         end
 
-        for _, entry in pairs(check:try_get("modifiers", {})) do
-            result[#result + 1] = entry
+        local described = THCRoll.DescribeGrant(creature, options, grant,
+            check.info.assistName or "Assisted",
+            check.info.assistDescription or "An ally assisted this test.",
+            MTGConstants.modifierRollType)
+        if described ~= nil then
+            result[#result + 1] = described
         end
-
-        return result
-    end,
-
-    --The power table reads #tiers, so a table without them raises.
-    ShowDialog = function(check, dialogOptions)
-        --The frame's blur is what makes it see-through; opacity alone would not.
-        dialogOptions.solidDialog = true
-
-        local tiers = check:try_get("options", {}).tiers
-
-        if tiers ~= nil then
-            dialogOptions.rollProperties = RollPropertiesPowerTable.new{
-                tiers = DeepCopy(tiers),
-            }
-            dialogOptions.PopulateCustom = ActivatedAbilityPowerRollBehavior.GetPowerTablePopulateCustom(
-                dialogOptions.rollProperties, dialogOptions.creature)
-        end
-
-        return GameHud.instance.rollDialog.data.ShowDialog(dialogOptions)
     end,
 }
 
@@ -121,7 +50,7 @@ end
 --- @param role string "lead" or "assist"
 --- @return string|nil actionId
 local function SendRequest(run, ch, assignment, grant, grantFrom, role)
-    local attrName = MTGUtils.CharacteristicName(assignment.attrId)
+    local attrName = THCUtils.CharacteristicName(assignment.attrId)
     local skills = {}
     if assignment.skillId ~= nil and assignment.skillId ~= "" then
         skills[1] = assignment.skillId
@@ -169,23 +98,11 @@ local function SendRequest(run, ch, assignment, grant, grantFrom, role)
         },
     }
 
-    local actionId = dmhub.SendActionRequest(RollRequest.new{
+    return THCRoll.Send{
         title = title,
-        checks = { check },
-        tokens = { [assignment.charid] = {} },
-    })
-
-    --Proceed accepts the roll, so the resultTable is kept and Pump waits on it.
-    local hud = actionId ~= nil and GameHud.instance or nil
-    if hud then
-        local resultTable = {}
-        hud:ShowRollSummaryDialog(actionId, resultTable)
-        g_pending = { actionId = actionId, resultTable = resultTable }
-    else
-        g_pending = nil
-    end
-
-    return actionId
+        charid = assignment.charid,
+        check = check,
+    }
 end
 
 --- Ask for the next roll this row still needs: the Assist goes first, because
@@ -256,12 +173,7 @@ end
 --- @param instanceId string
 --- @param actionId string|nil
 function MTGResolver.Cancel(instanceId, actionId)
-    --Dropped first, so the dialog's dying result is not read against a live request.
-    g_pending = nil
-
-    if actionId ~= nil then
-        dmhub.CancelActionRequest(actionId)
-    end
+    THCRoll.Cancel(actionId)
     MTGRun.SetResolution(instanceId, nil)
 end
 
@@ -290,68 +202,22 @@ function MTGResolver.Pump()
         return
     end
 
-    --Read first: Proceed has already cancelled the request, which must not read as abandoned.
-    local answer = nil
-    if g_pending ~= nil and g_pending.actionId == res.actionId then
-        answer = g_pending.resultTable
-    end
-
-    local req = dmhub.GetPlayerActionRequest(res.actionId)
-    local info = req ~= nil and req.info.tokens[res.actionFor] or nil
-    local status = info ~= nil and info.status or nil
+    local status, rollInfo = THCRoll.Harvest(res.actionId, res.actionFor)
 
     --A player dismissing their roll takes the request, and the dialog, down.
-    if status == "cancel" then
+    if status == "cancelled" then
         MTGResolver.Cancel(inst.id, res.actionId)
         return
     end
 
-    local tokenInfo = nil
-
-    if answer ~= nil then
-        --Still on the Director's desk.
-        if answer.result == nil then
-            return
-        end
-
-        g_pending = nil
-
-        --The dialog dropped the request on its way out; nothing left to cancel.
-        if answer.result ~= true or answer.action == nil then
-            MTGRun.SetResolution(inst.id, nil)
-            return
-        end
-
-        --Snapshotted before the dialog cancelled the request.
-        tokenInfo = answer.action.info.tokens[res.actionFor]
-    else
-        --No dialog: harvest on completion, and a vanished request was never asked.
-        if req == nil then
-            MTGRun.SetResolution(inst.id, nil)
-            return
-        end
-
-        if status ~= "complete" then
-            return
-        end
-
-        tokenInfo = info
-        dmhub.CancelActionRequest(res.actionId)
-    end
-
-    if tokenInfo == nil or tokenInfo.status ~= "complete" then
-        MTGRun.SetResolution(inst.id, nil)
+    if status == "waiting" then
         return
     end
 
-    --Two edges bump the tier without moving the total.
-    local rollInfo = {
-        total = tokenInfo.result,
-        naturalRoll = tokenInfo.naturalRoll,
-        boons = tokenInfo.boons,
-        banes = tokenInfo.banes,
-    }
-    rollInfo.tier = RollUtils.DiceResultToTier(rollInfo)
+    if status ~= "complete" then
+        MTGRun.SetResolution(inst.id, nil)
+        return
+    end
 
     local slot = res.slot or "lead"
     MTGRun.RecordRoll(inst.id, slot, rollInfo)

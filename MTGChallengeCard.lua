@@ -215,11 +215,11 @@ local function RollSummaryText(run, inst, ch, slot, assignment, roll)
         tostring(roll.total or 0),
         string.format("Natural %d", roll.naturalRoll or 0),
         string.format("%s %s",
-            MTGUtils.CharacteristicName(assignment.attrId),
-            MTGUtils.SignedModifier(MTGUtils.CharacteristicModifier(assignment.charid, assignment.attrId))),
+            THCUtils.CharacteristicName(assignment.attrId),
+            THCUtils.SignedModifier(THCUtils.CharacteristicModifier(assignment.charid, assignment.attrId))),
     }
     if assignment.skillId ~= nil and assignment.skillId ~= "" then
-        parts[#parts + 1] = MTGUtils.SkillName(assignment.skillId)
+        parts[#parts + 1] = THCUtils.SkillName(assignment.skillId)
     else
         parts[#parts + 1] = "no skill"
     end
@@ -385,24 +385,21 @@ local function SlotColumn(bound, slot, label)
             partsLine:SetClass("collapsed", roll == nil)
 
             if picking then
-                local allowedAttrs = MTGUtils.ToSet(ch:try_get("allowedCharacteristics", {}))
+                local allowedAttrs = THCUtils.ToSet(ch:try_get("allowedCharacteristics", {}))
                 local attrOptions = {}
-                for _, option in ipairs(MTGUtils.CharacteristicOptions()) do
-                    local modifier = MTGUtils.CharacteristicModifier(placed.charid, option.id)
+                for _, option in ipairs(THCUtils.CharacteristicOptions()) do
+                    local modifier = THCUtils.CharacteristicModifier(placed.charid, option.id)
                     attrOptions[#attrOptions + 1] = {
                         id = option.id,
-                        text = string.format("%s %s", option.text, MTGUtils.SignedModifier(modifier)),
+                        text = string.format("%s %s", option.text, THCUtils.SignedModifier(modifier)),
                     }
                 end
                 local attrId = placed.attrId or ""
                 attrRow:FireEvent("setPicker", attrOptions, attrId, editable,
                     attrId ~= "" and not allowedAttrs[attrId])
 
-                local allowedSkills = MTGUtils.ToSet(ch:try_get("allowedSkills", {}))
-                local skillOptions = { { id = "", text = "No skill" } }
-                for _, option in ipairs(MTGUtils.SkillOptionsFor(placed.charid)) do
-                    skillOptions[#skillOptions + 1] = option
-                end
+                local allowedSkills = THCUtils.ToSet(ch:try_get("allowedSkills", {}))
+                local skillOptions = THCUtils.SkillOptionsFor(placed.charid, true)
                 local skillId = placed.skillId or ""
                 skillRow:FireEvent("setPicker", skillOptions, skillId, editable,
                     skillId ~= "" and not allowedSkills[skillId])
@@ -592,7 +589,7 @@ end
 --- @param strip Panel
 --- @param entries table[] RollerEntries
 local function BindTokens(strip, entries)
-    MTGWidgets.BindList(strip, entries, function()
+    THCWidgets.BindList(strip, entries, function()
         return MTGWidgets.Slot{
             setToken = function(slot, entry)
                 local state = ""
@@ -834,10 +831,10 @@ local function MetaState(run, inst, ch)
     parts[#parts + 1] = tostring(MTGRun.IsOutcomeShown(run, ch.id))
     --OutcomeRevealed reads the T&O type field, which only T&O has.
     parts[#parts + 1] = tostring(run.moduleId == MTGConstants.moduleTO and OutcomeRevealed(run, ch))
-    parts[#parts + 1] = MTGUtils.NameList(
-        ch:try_get("allowedCharacteristics", {}), MTGUtils.CharacteristicName, "any")
-    parts[#parts + 1] = MTGUtils.NameList(
-        ch:try_get("allowedSkills", {}), MTGUtils.SkillName, "none")
+    parts[#parts + 1] = THCUtils.NameList(
+        ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any")
+    parts[#parts + 1] = THCUtils.NameList(
+        ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none")
     return table.concat(parts, "|")
 end
 
@@ -955,10 +952,10 @@ local function MetaLines(bound, director)
             metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value)
         end
     end
-    metaLines[#metaLines + 1] = MetaLine("Characteristics", MTGUtils.NameList(
-        ch:try_get("allowedCharacteristics", {}), MTGUtils.CharacteristicName, "any"))
-    metaLines[#metaLines + 1] = MetaLine("Skills", MTGUtils.NameList(
-        ch:try_get("allowedSkills", {}), MTGUtils.SkillName, "none"))
+    metaLines[#metaLines + 1] = MetaLine("Characteristics", THCUtils.NameList(
+        ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any"))
+    metaLines[#metaLines + 1] = MetaLine("Skills", THCUtils.NameList(
+        ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none"))
 
     return gui.Panel{
         width = "100%",
@@ -1029,7 +1026,7 @@ function MTGChallengeCard.Create(director, expanded)
     --Director side stays live: that is where the roll is taken back.
     local curtain = nil
     if not director then
-        curtain = MTGWidgets.Overlay("Rolling in progress...", "sizeXl", 1, 8)
+        curtain = THCWidgets.Overlay("Rolling in progress...", "sizeXl", 1, 8)
     end
 
     local arrow = gui.ExpandoArrow{

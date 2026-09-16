@@ -42,9 +42,9 @@ end
 --- @param assignment table
 --- @return string
 local function TestText(assignment)
-    local parts = { MTGUtils.CharacteristicName(assignment.attrId) }
+    local parts = { THCUtils.CharacteristicName(assignment.attrId) }
     if assignment.skillId ~= nil and assignment.skillId ~= "" then
-        parts[#parts + 1] = MTGUtils.SkillName(assignment.skillId)
+        parts[#parts + 1] = THCUtils.SkillName(assignment.skillId)
     end
     return table.concat(parts, ", ")
 end
