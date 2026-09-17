@@ -98,6 +98,8 @@ end
 --- @field moduleSettings table
 --- @field challenges MTGChallengeDef[]
 --- @field slug string a name-derived key, unique across the library
+--- @field folderId string
+--- @field folderName string the folder as named when the montage was filed, so an import can rebuild it
 --- @field successLadder table what the Director narrates per outcome, by rung id
 --- @field successLadderShown boolean whether the table reads the ladder
 MTGDefinition = RegisterGameType("MTGDefinition")
@@ -106,10 +108,15 @@ MTGDefinition = RegisterGameType("MTGDefinition")
 --- rather than raising, which is what EnsureSlug backfills from.
 MTGDefinition.slug = ""
 
+--- The data table the montages are rows of, which is also the heading the
+--- Create Module picker shows them under.
+MTGDefinition.tableName = "Montages"
+
 MTGDefinition.name = "New Montage"
 MTGDefinition.image = ""
 MTGDefinition.description = ""
 MTGDefinition.folderId = ""
+MTGDefinition.folderName = ""
 MTGDefinition.moduleId = MTGConstants.moduleBaseline
 
 --- Whether the table reads the Success Ladder. Named for what lights the eye:
@@ -173,6 +180,7 @@ mod:RegisterDocumentForCheckpointBackups(MTGConstants.libraryDoc)
 --- noun on an undo entry and the defaults a new montage starts with.
 local g_library = THCLibrary.CreateNew{
     mod = mod,
+    tableName = MTGDefinition.tableName,
     docId = MTGConstants.libraryDoc,
     noun = "montage",
     defaultName = "New Montage",
@@ -187,10 +195,10 @@ local g_library = THCLibrary.CreateNew{
 --- @return LuaCodeModDocumentSnapshot
 function MTGDefinition.Doc() return g_library:Doc() end
 
---- @return string monitorGame path for the library
+--- @return string monitorGame path for the folders
 function MTGDefinition.DocPath() return g_library:DocPath() end
 
---- Mutate the library inside one document change.
+--- Mutate the library as one step.
 --- @param description string
 --- @param fn fun(definitions: table<string, MTGDefinition>)
 function MTGDefinition.Mutate(description, fn) g_library:Mutate(description, fn) end

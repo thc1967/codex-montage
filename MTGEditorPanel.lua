@@ -1203,8 +1203,8 @@ function MTGEditorPanel.Create()
         valign = "top",
         vscroll = true,
 
-        monitorGame = MTGDefinition.DocPath(),
-        refreshGame = function(element)
+        monitorAssets = true,
+        refreshAssets = function(element)
             element:FireEvent("rebuild")
         end,
 

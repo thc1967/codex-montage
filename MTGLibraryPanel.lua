@@ -461,6 +461,10 @@ function MTGLibraryPanel.Create(onSelect, onImport)
         refreshGame = function(element)
             element:FireEvent("rebuild")
         end,
+        monitorAssets = true,
+        refreshAssets = function(element)
+            element:FireEvent("rebuild")
+        end,
 
         --- Select a montage and tell the editor about it.
         select = function(element, defid)
