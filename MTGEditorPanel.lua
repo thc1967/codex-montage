@@ -747,6 +747,7 @@ local function ChallengeCard(expanded)
     end
     local upButton = MoveButton(true)
     local downButton = MoveButton(false)
+    local kindBadge = MTGWidgets.KindBadge(16, 2)
 
     local hiddenEye = gui.Button{
         classes = { "sizeXs" },
@@ -859,6 +860,8 @@ local function ChallengeCard(expanded)
                     "Visible. Press to hide it."))
             end
 
+            MTGWidgets.PatchKindBadge(kindBadge, shown, ch, moduleId)
+
             form:FireEvent("setChallenge", ch, DefinitionStore(item.defid, ch.id, moduleId), moduleId)
         end,
 
@@ -881,6 +884,7 @@ local function ChallengeCard(expanded)
 
                 upButton,
                 downButton,
+                kindBadge,
                 hiddenEye,
                 completeIcon,
                 deleteButton,

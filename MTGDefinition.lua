@@ -351,9 +351,9 @@ end
 
 --- Move one Challenge up or down the authored order.
 --- Order IS the array: no field to add, so nothing authored before this can be
---- missing it. Crossing a group boundary adopts the neighbour's grouping rather
+--- missing it. Crossing a round boundary adopts the neighbour's round rather
 --- than refusing the move -- dragging something into Round 2 is taken to mean
---- it belongs to Round 2.
+--- it belongs to Round 2. Its kind is its own and moves with it.
 --- @param defid string
 --- @param challengeId string
 --- @param delta number -1 for up, 1 for down
@@ -387,14 +387,8 @@ function MTGDefinition.MoveChallenge(defid, challengeId, delta)
         local moving = challenges[from]
         local neighbour = challenges[to]
 
-        --Read before the swap, while the neighbour still names the target group.
+        --Read before the swap, while the neighbour still names the target round.
         moving.availableFromRound = neighbour.availableFromRound or 1
-        if def.moduleId == MTGConstants.moduleTO then
-            local theirs = neighbour:FieldsFor(MTGConstants.moduleTO).type
-            if theirs ~= nil then
-                moving:FieldsFor(MTGConstants.moduleTO).type = theirs
-            end
-        end
 
         table.remove(challenges, from)
         table.insert(challenges, to, moving)

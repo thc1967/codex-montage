@@ -342,3 +342,64 @@ function MTGWidgets.SwapClass(element, from, to)
     end
     return to
 end
+
+--- What a Threats & Opportunities Challenge is, for its title-bar badge. Nil
+--- under any other rules, where a Challenge has no kind.
+--- @param ch MTGChallengeDef
+--- @param moduleId string
+--- @return nil|{icon: string, tone: string, tooltip: string}
+function MTGWidgets.ChallengeKind(ch, moduleId)
+    if moduleId ~= MTGConstants.moduleTO then
+        return nil
+    end
+    if ch:FieldsFor(moduleId).type == "opportunity" then
+        return {
+            icon = MTGConstants.iconOpportunity,
+            tone = "success",
+            tooltip = "Opportunity",
+        }
+    end
+    return {
+        icon = MTGConstants.iconThreat,
+        tone = "danger",
+        tooltip = "Threat",
+    }
+end
+
+--- The kind badge, built once and collapsed; PatchKindBadge points it at a
+--- Challenge.
+--- @param size number
+--- @param margin number on each side
+--- @return Panel
+function MTGWidgets.KindBadge(size, margin)
+    return gui.Panel{
+        classes = { "collapsed" },
+        width = size,
+        height = size,
+        halign = "right",
+        valign = "center",
+        hmargin = margin,
+        bgimage = MTGConstants.iconThreat,
+    }
+end
+
+--- Points a kind badge at a Challenge: shown only where there is a kind, its
+--- glyph, tone and tooltip patched through `shown` so an unchanged one is
+--- left alone.
+--- @param badge Panel
+--- @param shown table the caller's memo of what is on screen
+--- @param ch MTGChallengeDef
+--- @param moduleId string
+function MTGWidgets.PatchKindBadge(badge, shown, ch, moduleId)
+    local kind = MTGWidgets.ChallengeKind(ch, moduleId)
+    badge:SetClass("collapsed", kind == nil)
+    if kind == nil then
+        return
+    end
+    if shown.kindIcon ~= kind.icon then
+        shown.kindIcon = kind.icon
+        badge.bgimage = kind.icon
+        badge.tooltip = gui.Tooltip(kind.tooltip)
+    end
+    shown.kindTone = MTGWidgets.SwapClass(badge, shown.kindTone, MTGWidgets.ToneClass(kind.tone))
+end

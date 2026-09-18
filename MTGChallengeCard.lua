@@ -680,6 +680,7 @@ local function BadgeBar(bound, director)
     bound.foldedTokens = TokenStrip()
     bound.openTokens = TokenStrip()
 
+    local kindBadge = MTGWidgets.KindBadge(18, 6)
     local children = { repeatBadge, bound.foldedTokens, bound.openTokens }
 
     --The roll button holds its place greyed, so the Director sees it is a step away.
@@ -726,6 +727,7 @@ local function BadgeBar(bound, director)
     end
 
     local statusBadge = PatchedBadge()
+    children[#children + 1] = kindBadge
     children[#children + 1] = statusBadge
 
     return gui.Panel{
@@ -740,6 +742,7 @@ local function BadgeBar(bound, director)
             local inst = bound.inst
             local ch = bound.ch
             local adjudicated = inst.adjudicatedInRound ~= nil
+            MTGWidgets.PatchKindBadge(kindBadge, shown, ch, run.moduleId)
 
             local attemptsLeft = MTGRun.AttemptsLeft(run, ch)
             local repeats = not adjudicated and ch:RepeatLimit() > 0 and attemptsLeft > 1
