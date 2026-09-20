@@ -481,8 +481,10 @@ local function ModuleFields(run, ch)
     local result = {}
     for _, field in ipairs(MTGRules.GetOrDefault(run.moduleId).ChallengeFields()) do
         local value = ch:FieldValue(run.moduleId, field)
-        if value ~= nil and value ~= "" then
-            local text = tostring(value)
+        --An empty note still wants its input on the Director's card.
+        local editableText = dmhub.isDM and field.liveEditable == true and field.type == "text"
+        if (value ~= nil and value ~= "") or editableText then
+            local text = tostring(value or "")
             for _, option in ipairs(field.options or {}) do
                 if option.id == value then
                     text = option.text
@@ -880,6 +882,39 @@ local function MetaLines(bound, director)
         }
     end
 
+    --The Director's note on a Challenge, the label over a full-width field,
+    --written on commit so a refresh mid-word cannot take the caret.
+    local function MetaText(entry)
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            valign = "top",
+
+            gui.Label{
+                classes = { "sizeS", "fgMuted" },
+                width = "100%",
+                height = "auto",
+                halign = "left",
+                valign = "top",
+                markdown = true,
+                text = string.format("**%s:**", entry.label),
+            },
+
+            gui.Input{
+                classes = { "input", "sizeS" },
+                width = "100%",
+                halign = "left",
+                valign = "top",
+                text = tostring(entry.raw or ""),
+                characterLimit = 200,
+                change = function(element)
+                    MTGRun.SetChallengeField(bound.ch.id, entry.field.id, element.text or "")
+                end,
+            },
+        }
+    end
+
     --The control going away stops a late change looking like a rewritten verdict.
     local function MetaChoice(entry)
         return gui.Panel{
@@ -931,6 +966,8 @@ local function MetaLines(bound, director)
     end
 
     local metaLines = {}
+    --Full-width notes close the block, under the fixed lines.
+    local notes = {}
     for _, entry in ipairs(ModuleFields(run, ch)) do
         local isOutcome = entry.field.id == "outcome"
             and run.moduleId == MTGConstants.moduleTO
@@ -940,6 +977,7 @@ local function MetaLines(bound, director)
                 and not director
                 and MTGRun.IsDifficultyHidden(run, ch.id))
             or (isOutcome and not director and not OutcomeRevealed(run, ch))
+            or (entry.field.directorOnly == true and not director)
 
         if suppressed then
             --nothing on this line
@@ -948,6 +986,9 @@ local function MetaLines(bound, director)
             and entry.field.type == "choice"
             and #(entry.field.options or {}) > 0 then
             metaLines[#metaLines + 1] = MetaChoice(entry)
+        elseif dmhub.isDM and entry.field.liveEditable == true
+            and entry.field.type == "text" then
+            notes[#notes + 1] = MetaText(entry)
         elseif isOutcome and director then
             metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value,
                 OutcomeEye(run, ch))
@@ -959,6 +1000,9 @@ local function MetaLines(bound, director)
         ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any"))
     metaLines[#metaLines + 1] = MetaLine("Skills", THCUtils.NameList(
         ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none"))
+    for _, note in ipairs(notes) do
+        metaLines[#metaLines + 1] = note
+    end
 
     return gui.Panel{
         width = "100%",

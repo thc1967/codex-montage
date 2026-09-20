@@ -322,7 +322,8 @@ local function ChallengeModuleField(bound, moduleId, field, hint)
             end)
     end
 
-    return FormRow(field.text, "60%", gui.Input{
+    local full = field.fullWidth == true
+    return FormRow(field.text, cond(full, "94%", "60%"), gui.Input{
         classes = { "formStacked", "sizeS" },
         text = "",
         characterLimit = 200,
@@ -458,18 +459,38 @@ function MTGEditorPanel.ChallengeForm(opts)
     local bound = {}
 
     --Only a choice field can be required; free text is the Director's business.
+    --A field asking for the full width takes a row of its own beneath the rest.
     local function ModuleFieldsRow(moduleId)
         local moduleFields = {}
+        local fullRows = {}
         for _, field in ipairs(MTGRules.GetOrDefault(moduleId).ChallengeFields()) do
-            moduleFields[#moduleFields + 1] = ChallengeModuleField(bound, moduleId, field,
+            local control = ChallengeModuleField(bound, moduleId, field,
                 cond(field.type == "choice", required))
+            if field.fullWidth == true then
+                fullRows[#fullRows + 1] = control
+            else
+                moduleFields[#moduleFields + 1] = control
+            end
+        end
+
+        local rows = {
+            gui.Panel{
+                width = "100%",
+                height = "auto",
+                flow = "horizontal",
+                valign = "top",
+                children = moduleFields,
+            },
+        }
+        for _, row in ipairs(fullRows) do
+            rows[#rows + 1] = row
         end
         return gui.Panel{
             width = "100%",
             height = "auto",
-            flow = "horizontal",
+            flow = "vertical",
             valign = "top",
-            children = moduleFields,
+            children = rows,
         }
     end
 

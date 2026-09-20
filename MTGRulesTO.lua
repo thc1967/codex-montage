@@ -203,6 +203,10 @@ MTGRules.Register{
             else
                 text = string.format("%s - %s", ch.name or "", text)
             end
+            local detail = fields.outcomeDetail
+            if detail ~= nil and detail ~= "" then
+                text = string.format("%s - %s", text, detail)
+            end
 
             if fields.type == "opportunity" then
                 if resolved then
@@ -313,6 +317,15 @@ MTGRules.Register{
                 text = "Outcome",
                 type = "text",
                 default = "",
+            },
+            {
+                id = "outcomeDetail",
+                text = "Outcome Detail",
+                type = "text",
+                default = "",
+                directorOnly = true,
+                liveEditable = true,
+                fullWidth = true,
             },
         }
     end,
