@@ -344,7 +344,7 @@ function MTGRunPanel.Create(opts)
                 local tip = status.tooltip or ""
                 if shown.tip ~= tip then
                     shown.tip = tip
-                    badge.tooltip = gui.Tooltip(tip)
+                    badge.tooltip = THCWidgets.Tooltip(tip)
                 end
             end,
 
@@ -503,7 +503,7 @@ function MTGRunPanel.Create(opts)
                 valign = "center",
                 --Clear of the board's scrollbar.
                 rmargin = 20,
-                hover = gui.Tooltip("Add a challenge"),
+                hover = THCWidgets.Tooltip("Add a challenge"),
                 click = function()
                     if m_draft ~= nil then
                         return
@@ -646,7 +646,7 @@ function MTGRunPanel.Create(opts)
                         m_ladderEyeShown = shown
                         ladderEye:FireEvent("setIcon", cond(shown,
                             "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"))
-                        ladderEye.tooltip = gui.Tooltip(cond(shown,
+                        ladderEye.tooltip = THCWidgets.Tooltip(cond(shown,
                             "The table can read the ladder. Press to keep it back.",
                             "Kept from the table. Press to show it."))
                     end
@@ -776,7 +776,7 @@ function MTGRunPanel.Create(opts)
             halign = "left",
             valign = "center",
             hmargin = 8,
-            hover = gui.Tooltip("Throw away every roll and go back to setup"),
+            hover = THCWidgets.Tooltip("Throw away every roll and go back to setup"),
             click = function()
                 MTGRun.HideFromPlayers()
                 MTGRun.Reset()
@@ -790,7 +790,7 @@ function MTGRunPanel.Create(opts)
             text = "Show Players",
             halign = "left",
             valign = "center",
-            hover = gui.Tooltip("Put the board back on the players' screens"),
+            hover = THCWidgets.Tooltip("Put the board back on the players' screens"),
             click = function(element)
                 MTGRun.PresentToPlayers(element)
             end,
@@ -811,7 +811,7 @@ function MTGRunPanel.Create(opts)
             text = "End",
             halign = "right",
             valign = "center",
-            hover = gui.Tooltip("Close the montage and review the result"),
+            hover = THCWidgets.Tooltip("Close the montage and review the result"),
             click = function()
                 --The board stays up, curtained, until Complete.
                 MTGRun.EndRun()

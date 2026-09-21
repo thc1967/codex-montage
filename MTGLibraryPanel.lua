@@ -164,7 +164,7 @@ local function CreateRow(onSelect, indent)
             if bound.moduleId ~= def.moduleId then
                 bound.moduleId = def.moduleId
                 rulesIcon.bgimage = RulesIcon(def.moduleId)
-                rulesIcon.tooltip = gui.Tooltip(MTGRules.Name(def.moduleId))
+                rulesIcon.tooltip = THCWidgets.Tooltip(MTGRules.Name(def.moduleId))
             end
 
             local face = PlayFace(bound.defid)
@@ -174,7 +174,7 @@ local function CreateRow(onSelect, indent)
             end
             if bound.playTip ~= face.tooltip then
                 bound.playTip = face.tooltip
-                playButton.tooltip = gui.Tooltip(face.tooltip)
+                playButton.tooltip = THCWidgets.Tooltip(face.tooltip)
             end
             if playButton.interactable ~= face.interactable then
                 playButton.interactable = face.interactable
@@ -199,7 +199,7 @@ local function CreateRow(onSelect, indent)
                 halign = "right",
                 valign = "center",
                 hmargin = 2,
-                hover = gui.Tooltip("More"),
+                hover = THCWidgets.Tooltip("More"),
                 click = function(element)
                     local defid = bound.defid
                     element.popup = gui.ContextMenu{
@@ -575,7 +575,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                 halign = "right",
                 valign = "center",
                 hmargin = 4,
-                hover = gui.Tooltip("Import a montage"),
+                hover = THCWidgets.Tooltip("Import a montage"),
                 click = function()
                     onImport()
                 end,
@@ -589,7 +589,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                 halign = "right",
                 valign = "center",
                 hmargin = 4,
-                hover = gui.Tooltip("New folder"),
+                hover = THCWidgets.Tooltip("New folder"),
                 click = function()
                     MTGDefinition.CreateFolder()
                 end,
@@ -599,7 +599,7 @@ function MTGLibraryPanel.Create(onSelect, onImport)
                 classes = { "addButton", "sizeS" },
                 halign = "right",
                 valign = "center",
-                hover = gui.Tooltip("Prepare a new montage"),
+                hover = THCWidgets.Tooltip("Prepare a new montage"),
                 click = function(element)
                     local defid = MTGDefinition.CreateInLibrary()
                     local controller = element:FindParentWithClass("mtgLibrary")

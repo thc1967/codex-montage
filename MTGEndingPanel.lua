@@ -136,7 +136,7 @@ function MTGEndingPanel.Create(opts)
         valign = "center",
         text = "Write to journal",
         value = true,
-        hover = gui.Tooltip("Leave a record in Private Documents / Montage Results"),
+        hover = THCWidgets.Tooltip("Leave a record in Private Documents / Montage Results"),
         change = function(element)
             MTGRun.SetEndingWriteJournal(element.value)
         end,
@@ -174,7 +174,7 @@ function MTGEndingPanel.Create(opts)
         text = "Complete",
         halign = "right",
         valign = "center",
-        hover = gui.Tooltip("Award the Victories, announce the result, clear the montage"),
+        hover = THCWidgets.Tooltip("Award the Victories, announce the result, clear the montage"),
         click = function()
             --A value typed and never blurred has not reached the Run yet.
             MTGRun.SetEndingVictories(tonumber(victoryInput.text) or 0)

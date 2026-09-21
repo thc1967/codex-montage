@@ -82,7 +82,7 @@ function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
             end
         end,
 
-        hover = gui.Tooltip(p.name or ""),
+        hover = THCWidgets.Tooltip(p.name or ""),
 
         data = { charid = p.charid },
 
@@ -176,7 +176,7 @@ local function Pip(pip)
     }
 
     if pip.adjustable then
-        args.hover = gui.Tooltip(cond(pip.earned,
+        args.hover = THCWidgets.Tooltip(cond(pip.earned,
             string.format("Take back one %s", pip.label),
             string.format("Award one %s", pip.label)))
         args.press = function()
@@ -399,7 +399,7 @@ function MTGWidgets.PatchKindBadge(badge, shown, ch, moduleId)
     if shown.kindIcon ~= kind.icon then
         shown.kindIcon = kind.icon
         badge.bgimage = kind.icon
-        badge.tooltip = gui.Tooltip(kind.tooltip)
+        badge.tooltip = THCWidgets.Tooltip(kind.tooltip)
     end
     shown.kindTone = MTGWidgets.SwapClass(badge, shown.kindTone, MTGWidgets.ToneClass(kind.tone))
 end

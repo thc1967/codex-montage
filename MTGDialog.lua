@@ -197,7 +197,7 @@ function MTGDialog.Create()
         halign = "right",
         valign = "center",
         interactable = false,
-        hover = gui.Tooltip("Set this montage up and run it"),
+        hover = THCWidgets.Tooltip("Set this montage up and run it"),
         click = function(element)
             if not element.interactable or m_selectedDefid == nil then
                 return

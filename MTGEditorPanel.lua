@@ -251,7 +251,7 @@ local function EyeButton(read, onTip, offTip, onIcon, offIcon, press)
             if shown ~= on then
                 shown = on
                 element:FireEvent("setIcon", cond(on, onIcon, offIcon))
-                element.tooltip = gui.Tooltip(cond(on, onTip, offTip))
+                element.tooltip = THCWidgets.Tooltip(cond(on, onTip, offTip))
             end
         end,
         click = function()
@@ -646,7 +646,7 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
         halign = "right",
         valign = "center",
         hmargin = 2,
-        hover = gui.Tooltip("Present this challenge to the table"),
+        hover = THCWidgets.Tooltip("Present this challenge to the table"),
         click = function(element)
             if element:HasClass("disabled") then
                 return
@@ -704,7 +704,7 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
                     halign = "right",
                     valign = "top",
                     hmargin = 2,
-                    hover = gui.Tooltip("Discard this challenge"),
+                    hover = THCWidgets.Tooltip("Discard this challenge"),
                     click = function()
                         onDiscard()
                     end,
@@ -760,7 +760,7 @@ local function ChallengeCard(expanded)
             halign = "right",
             valign = "center",
             hmargin = 2,
-            hover = gui.Tooltip(cond(up, "Move up", "Move down")),
+            hover = THCWidgets.Tooltip(cond(up, "Move up", "Move down")),
             click = function()
                 MTGDefinition.MoveChallenge(bound.defid, bound.ch.id, cond(up, -1, 1))
             end,
@@ -792,7 +792,7 @@ local function ChallengeCard(expanded)
         halign = "right",
         valign = "center",
         hmargin = 2,
-        hover = gui.Tooltip("Ready to run"),
+        hover = THCWidgets.Tooltip("Ready to run"),
     }
 
     local deleteButton = gui.Button{
@@ -801,7 +801,7 @@ local function ChallengeCard(expanded)
         valign = "top",
         hmargin = 2,
         requireConfirm = true,
-        hover = gui.Tooltip("Remove this challenge"),
+        hover = THCWidgets.Tooltip("Remove this challenge"),
         click = function()
             MTGDefinition.RemoveChallenge(bound.defid, bound.ch.id)
         end,
@@ -876,7 +876,7 @@ local function ChallengeCard(expanded)
                 shown.hidden = hidden
                 hiddenEye:FireEvent("setIcon",
                     cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"))
-                hiddenEye.tooltip = gui.Tooltip(cond(hidden,
+                hiddenEye.tooltip = THCWidgets.Tooltip(cond(hidden,
                     "Hidden. Press to make it visible.",
                     "Visible. Press to hide it."))
             end
@@ -1156,7 +1156,7 @@ function MTGEditorPanel.Create()
         halign = "left",
         valign = "center",
         hmargin = 8,
-        hover = gui.Tooltip("Add a challenge"),
+        hover = THCWidgets.Tooltip("Add a challenge"),
         click = function()
             if m_defid ~= nil then
                 MTGDefinition.AddChallenge(m_defid)
@@ -1280,7 +1280,7 @@ function MTGEditorPanel.Create()
                     m_ladderShown = shown
                     ladderEye:FireEvent("setIcon", cond(shown,
                         "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"))
-                    ladderEye.tooltip = gui.Tooltip(cond(shown,
+                    ladderEye.tooltip = THCWidgets.Tooltip(cond(shown,
                         "The table can read the ladder. Press to keep it back.",
                         "Kept from the table. Press to show it."))
                 end

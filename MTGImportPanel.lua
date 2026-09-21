@@ -81,7 +81,7 @@ function MTGImportPanel.Create(onDone)
         halign = "left",
         valign = "center",
         rmargin = 8,
-        hover = gui.Tooltip("Put a filled-in template on the clipboard"),
+        hover = THCWidgets.Tooltip("Put a filled-in template on the clipboard"),
         click = function()
             dmhub.CopyToClipboard(MTGDefinition.BuildImportTemplate(m_moduleId))
             resultLabel:SetClass("collapsed", false)

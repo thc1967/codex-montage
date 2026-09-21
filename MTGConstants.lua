@@ -24,6 +24,9 @@ MTGConstants.playerWindowHeight = 600
 MTGConstants.descriptionLineHeight = 18
 MTGConstants.descriptionLinesOpen = 4
 
+--- The Director's note field on a running test; the themed input is 26.
+MTGConstants.noteInputHeight = 12
+
 -- Whole percentages: the shell takes no decimals.
 MTGConstants.footerCells = {33, 34, 33}
 MTGConstants.footerCellsRun = {50, 50}

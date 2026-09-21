@@ -69,7 +69,7 @@ local function SlotBox(bound, slot, label, inert, dimmed)
         halign = "center",
         valign = "top",
         dragTarget = not inert,
-        hover = gui.Tooltip(label),
+        hover = THCWidgets.Tooltip(label),
 
         dropOnSlot = function(element, charid)
             MTGRun.Stage(bound.inst.id, slot, charid)
@@ -127,7 +127,7 @@ local function OffListIcon(tooltip)
         valign = "center",
         lmargin = 2,
         bgimage = "phosphor/warning-duotone.png",
-        hover = gui.Tooltip(tooltip),
+        hover = THCWidgets.Tooltip(tooltip),
     }
 end
 
@@ -553,9 +553,9 @@ local function OutcomeEye(run, ch)
         width = 16,
         height = 16,
         halign = "left",
-        valign = "center",
+        valign = "top",
         rmargin = 6,
-        hover = gui.Tooltip(tip),
+        hover = THCWidgets.Tooltip(tip),
         click = function()
             MTGRun.SetOutcomeShown(ch.id, not shown)
         end,
@@ -609,7 +609,7 @@ local function BindTokens(strip, entries)
                         halign = "right",
                         valign = "center",
                         lmargin = 3,
-                        hover = gui.Tooltip(string.format("%s (%s)", entry.name, entry.slot)),
+                        hover = THCWidgets.Tooltip(string.format("%s (%s)", entry.name, entry.slot)),
                     })
                 end)
             end,
@@ -650,7 +650,7 @@ local function HeaderButton(icon, tooltip, click)
         click = click,
     }
     if tooltip ~= nil then
-        args.hover = gui.Tooltip(tooltip)
+        args.hover = THCWidgets.Tooltip(tooltip)
     end
     return gui.Button(args)
 end
@@ -754,7 +754,7 @@ local function BadgeBar(bound, director)
                     attemptsLeft - 1, cond(attemptsLeft - 1 == 1, "", "s"))
                 if shown.repeatTip ~= tip then
                     shown.repeatTip = tip
-                    repeatBadge.tooltip = gui.Tooltip(tip)
+                    repeatBadge.tooltip = THCWidgets.Tooltip(tip)
                 end
             end
 
@@ -781,7 +781,7 @@ local function BadgeBar(bound, director)
                             "Put a Hero in the Lead slot first"))
                     if shown.rollTip ~= tip then
                         shown.rollTip = tip
-                        rollButton.tooltip = gui.Tooltip(tip)
+                        rollButton.tooltip = THCWidgets.Tooltip(tip)
                     end
                 end
 
@@ -797,7 +797,7 @@ local function BadgeBar(bound, director)
                     shown.hidden = hidden
                     hiddenEye:FireEvent("setIcon",
                         cond(hidden, "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"))
-                    hiddenEye.tooltip = gui.Tooltip(cond(hidden,
+                    hiddenEye.tooltip = THCWidgets.Tooltip(cond(hidden,
                         "Hidden from the table. Press to reveal it.",
                         "The table can see this. Press to hide it."))
                 end
@@ -813,7 +813,7 @@ local function BadgeBar(bound, director)
             local tip = status.tooltip or ""
             if shown.statusTip ~= tip then
                 shown.statusTip = tip
-                statusBadge.tooltip = gui.Tooltip(tip)
+                statusBadge.tooltip = THCWidgets.Tooltip(tip)
             end
         end,
 
@@ -843,11 +843,14 @@ local function MetaState(run, inst, ch)
     return table.concat(parts, "|")
 end
 
---- The module's fields, the characteristics and the skills, one line each,
---- built for one state of the row. Remade as a whole when MetaState moves.
+--- The module's fields, the characteristics and the skills, one line each:
+--- a column beside the slots, and the Outcome with the notes under it as a
+--- band beneath them. Both built for one state of the row and remade
+--- together when MetaState moves.
 --- @param bound MTGRowBinding
 --- @param director boolean
---- @return Panel
+--- @return Panel column
+--- @return Panel notes
 local function MetaLines(bound, director)
     local run = bound.run
     local inst = bound.inst
@@ -903,7 +906,8 @@ local function MetaLines(bound, director)
 
             gui.Input{
                 classes = { "input", "sizeS" },
-                width = "100%",
+                height = MTGConstants.noteInputHeight,
+                width = "100%-16",
                 halign = "left",
                 valign = "top",
                 text = tostring(entry.raw or ""),
@@ -954,7 +958,7 @@ local function MetaLines(bound, director)
                 halign = "left",
                 valign = "center",
                 lmargin = 6,
-                hover = gui.Tooltip(cond(MTGRun.IsDifficultyHidden(run, ch.id),
+                hover = THCWidgets.Tooltip(cond(MTGRun.IsDifficultyHidden(run, ch.id),
                     "Difficulty hidden from the table. Press to show it.",
                     "The table can see the difficulty. Press to hide it.")),
                 click = function()
@@ -965,8 +969,8 @@ local function MetaLines(bound, director)
         }
     end
 
-    local metaLines = {}
-    --Full-width notes close the block, under the fixed lines.
+    local column = {}
+    --The Outcome and the notes under it span the card, beneath the columns.
     local notes = {}
     for _, entry in ipairs(ModuleFields(run, ch)) do
         local isOutcome = entry.field.id == "outcome"
@@ -985,33 +989,35 @@ local function MetaLines(bound, director)
             and entry.field.liveEditable == true
             and entry.field.type == "choice"
             and #(entry.field.options or {}) > 0 then
-            metaLines[#metaLines + 1] = MetaChoice(entry)
+            column[#column + 1] = MetaChoice(entry)
         elseif dmhub.isDM and entry.field.liveEditable == true
             and entry.field.type == "text" then
             notes[#notes + 1] = MetaText(entry)
-        elseif isOutcome and director then
-            metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value,
-                OutcomeEye(run, ch))
+        elseif isOutcome then
+            --cond builds both arms, and an eye a player never sees would be
+            --an orphan panel.
+            notes[#notes + 1] = MetaLine(entry.label, entry.value,
+                director and OutcomeEye(run, ch) or nil)
         else
-            metaLines[#metaLines + 1] = MetaLine(entry.label, entry.value)
+            column[#column + 1] = MetaLine(entry.label, entry.value)
         end
     end
-    metaLines[#metaLines + 1] = MetaLine("Characteristics", THCUtils.NameList(
+    column[#column + 1] = MetaLine("Characteristics", THCUtils.NameList(
         ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any"))
-    metaLines[#metaLines + 1] = MetaLine("Skills", THCUtils.NameList(
+    column[#column + 1] = MetaLine("Skills", THCUtils.NameList(
         ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none"))
-    for _, note in ipairs(notes) do
-        metaLines[#metaLines + 1] = note
-    end
 
-    return gui.Panel{
-        width = "100%",
-        height = "auto",
-        flow = "vertical",
-        halign = "left",
-        valign = "top",
-        children = metaLines,
-    }
+    local function Stack(children)
+        return gui.Panel{
+            width = "100%",
+            height = "auto",
+            flow = "vertical",
+            halign = "left",
+            valign = "top",
+            children = children,
+        }
+    end
+    return Stack(column), Stack(notes)
 end
 
 --- One attempt row's card. Built once and handed a row with `setRow`;
@@ -1046,6 +1052,7 @@ function MTGChallengeCard.Create(director, expanded)
     }
 
     local metaSlot = MTGWidgets.Slot{ width = "34%", height = "auto", valign = "top" }
+    local noteSlot = MTGWidgets.Slot{ width = "100%", height = "auto", valign = "top" }
     local leadColumn = SlotColumn(bound, "lead", "Lead")
     local assistColumn = SlotColumn(bound, "assist", "Assist")
 
@@ -1068,6 +1075,8 @@ function MTGChallengeCard.Create(director, expanded)
             leadColumn,
             assistColumn,
         },
+
+        noteSlot,
     }
 
     --Director side stays live: that is where the roll is taken back.
@@ -1165,8 +1174,14 @@ function MTGChallengeCard.Create(director, expanded)
 
             badgeBar:FireEvent("refreshBadges")
 
-            MTGWidgets.SetSlot(metaSlot, MetaState(run, inst, ch), function()
-                return MetaLines(bound, director)
+            --The two slots move together, so the inner build always runs.
+            local metaState = MetaState(run, inst, ch)
+            MTGWidgets.SetSlot(metaSlot, metaState, function()
+                local column, notes = MetaLines(bound, director)
+                MTGWidgets.SetSlot(noteSlot, metaState, function()
+                    return notes
+                end)
+                return column
             end)
 
             leadColumn:FireEvent("setColumn")
