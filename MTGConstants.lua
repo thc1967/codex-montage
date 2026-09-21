@@ -27,6 +27,10 @@ MTGConstants.descriptionLinesOpen = 4
 --- The Director's note field on a running test; the themed input is 26.
 MTGConstants.noteInputHeight = 12
 
+--- The scene picker beside the montage name, as tall as the two fields it
+--- sits beside.
+MTGConstants.sceneImageHeight = 92
+
 -- Whole percentages: the shell takes no decimals.
 MTGConstants.footerCells = {33, 34, 33}
 MTGConstants.footerCellsRun = {50, 50}

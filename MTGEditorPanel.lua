@@ -1151,6 +1151,36 @@ function MTGEditorPanel.Create()
         end,
     }
 
+    local scenePicker = THCWidgets.ScenePicker{
+        height = MTGConstants.sceneImageHeight,
+        halign = "center",
+        change = function(value)
+            if m_defid ~= nil then
+                MTGDefinition.SetImage(m_defid, value)
+            end
+        end,
+    }
+
+    local sceneCell = gui.Panel{
+        width = "auto",
+        height = "auto",
+        flow = "vertical",
+        halign = "left",
+        valign = "center",
+
+        scenePicker,
+
+        gui.Label{
+            classes = { "sizeXxs", "fg" },
+            width = "auto",
+            height = "auto",
+            halign = "center",
+            valign = "top",
+            textAlignment = "center",
+            text = "Backdrop",
+        },
+    }
+
     local addChallengeButton = gui.Button{
         classes = { "addButton", "sizeXs" },
         halign = "left",
@@ -1177,8 +1207,18 @@ function MTGEditorPanel.Create()
             halign = "left",
             valign = "top",
 
-            FormRow("Name", "60%", nameInput),
-            FormRow("Rules", "30%", moduleDropdown),
+            gui.Panel{
+                width = "70%",
+                height = "auto",
+                flow = "vertical",
+                halign = "left",
+                valign = "top",
+
+                FormRow("Name", "86%", nameInput),
+                FormRow("Rules", "43%", moduleDropdown),
+            },
+
+            sceneCell,
         },
 
         settingsSlot,
@@ -1262,6 +1302,10 @@ function MTGEditorPanel.Create()
             end
             if moduleDropdown.idChosen ~= def.moduleId then
                 moduleDropdown.idChosen = def.moduleId
+            end
+            local image = def:try_get("image", "")
+            if scenePicker.value ~= image then
+                scenePicker.value = image
             end
 
             local ladder = def.moduleId == MTGConstants.moduleBaseline

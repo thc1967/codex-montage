@@ -266,6 +266,18 @@ function MTGDefinition.SetDescription(id, description)
     end)
 end
 
+--- @param id string
+--- @param image nil|string the Cover Art picture that stands for this montage
+function MTGDefinition.SetImage(id, image)
+    image = image or ""
+    MTGDefinition.Mutate("Set montage scene", function(defs)
+        local def = defs[id]
+        if def ~= nil and def:try_get("image", "") ~= image then
+            def.image = image
+        end
+    end)
+end
+
 --- What the Director narrates when the montage lands on one rung.
 --- @param def MTGDefinition
 --- @param key string a MTGConstants.ladderRungs id

@@ -40,6 +40,7 @@ end
 --- @field paused boolean
 --- @field successLadder table what the Director narrates per outcome, by rung id
 --- @field successLadderShown boolean whether the table reads the ladder
+--- @field image string the scene the table sees, copied so editing the montage mid-run changes nothing
 MTGRun = RegisterGameType("MTGRun")
 
 MTGRun.name = ""
@@ -178,12 +179,17 @@ function MTGRun.BeginSetup(defid)
 
         successLadder = DeepCopy(def:try_get("successLadder", {})),
         successLadderShown = def:try_get("successLadderShown", false) == true,
+        image = def:try_get("image", ""),
     }
 
     local doc = MTGRun.Doc()
     doc:BeginChange()
     doc.data.run = run
     doc:CompleteChange("Start montage setup")
+
+    --The table gets the scene over everything while the Director sets up; the
+    --Director is left looking at the map, since "players" excludes them.
+    THCUtils.ShowScene(run.image, true, false)
 
     return run.id
 end
@@ -443,6 +449,13 @@ function MTGRun.Start()
         run.instances = {}
         MTGRun.SeedRound(run, 1)
     end)
+
+    --Play begins, so the scene drops behind the interface and the Director
+    --joins the table in seeing it. After the mutate: one document at a time.
+    local run = MTGRun.Active()
+    if run ~= nil then
+        THCUtils.ShowScene(run:try_get("image", ""), "all", true)
+    end
 end
 
 --- @param paused boolean
