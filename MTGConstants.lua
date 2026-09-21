@@ -12,12 +12,17 @@ MTGConstants.panelTitle = "Montage Tests"
 MTGConstants.playerPanelTitle = "Montage Test"
 
 MTGConstants.windowWidth = 1220
-MTGConstants.windowHeight = 620
+MTGConstants.windowHeight = 780
 MTGConstants.listWidth = 360
 MTGConstants.listRightMargin = 12
 
 MTGConstants.playerWindowWidth = 800
 MTGConstants.playerWindowHeight = 600
+
+--- The run panel's description well: one line of small text when folded,
+--- this many lines, scrolling, when open.
+MTGConstants.descriptionLineHeight = 18
+MTGConstants.descriptionLinesOpen = 4
 
 -- Whole percentages: the shell takes no decimals.
 MTGConstants.footerCells = {33, 34, 33}

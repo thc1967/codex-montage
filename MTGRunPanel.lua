@@ -24,16 +24,61 @@ function MTGRunPanel.Create(opts)
 
     local m_description = nil
 
+    --The fold is this client's own, and every open starts unfolded.
+    local m_descriptionOpen = true
+
     local descriptionLabel = gui.Label{
-        classes = { "sizeS", "noBold", "collapsed" },
-        width = "100%",
+        classes = { "sizeS", "noBold" },
+        width = "100%-40",
         height = "auto",
         halign = "left",
         valign = "top",
-        tmargin = 4,
         markdown = true,
         textWrap = true,
         text = "",
+    }
+
+    --A well of fixed height, so the description costs the board a known
+    --amount whether it runs to one line or forty.
+    local descriptionWell = gui.Panel{
+        width = "100%-20",
+        height = MTGConstants.descriptionLineHeight * MTGConstants.descriptionLinesOpen,
+        flow = "vertical",
+        halign = "left",
+        valign = "top",
+        vscroll = true,
+
+        descriptionLabel,
+    }
+
+    local descriptionArrow = gui.ExpandoArrow{
+        classes = { "bgFg", "expanded" },
+        width = 10,
+        height = 10,
+        halign = "left",
+        valign = "top",
+        lmargin = -4,
+        rmargin = 4,
+        tmargin = 4,
+        click = function(element)
+            m_descriptionOpen = not element:HasClass("expanded")
+            element:SetClass("expanded", m_descriptionOpen)
+            descriptionWell.selfStyle.height = MTGConstants.descriptionLineHeight
+                * cond(m_descriptionOpen, MTGConstants.descriptionLinesOpen, 1)
+        end,
+    }
+
+    local descriptionPanel = gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        halign = "left",
+        valign = "top",
+        tmargin = 4,
+
+        descriptionArrow,
+        descriptionWell,
     }
 
     local metersPanel = gui.Panel{
@@ -569,7 +614,7 @@ function MTGRunPanel.Create(opts)
             if m_description ~= description then
                 m_description = description
                 descriptionLabel.text = description
-                descriptionLabel:SetClass("collapsed", description == "")
+                descriptionPanel:SetClass("collapsed", description == "")
             end
 
             THCWidgets.BindList(metersPanel, MTGRun.Meters(), MTGWidgets.Meter, "setMeter")
@@ -698,7 +743,7 @@ function MTGRunPanel.Create(opts)
             element:FireEvent("rebuild")
         end,
 
-        descriptionLabel,
+        descriptionPanel,
 
         metersPanel,
 
