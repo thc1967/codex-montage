@@ -13,107 +13,6 @@ MTGChallengeCard = {}
 --- @field foldedTokens Panel|nil
 --- @field openTokens Panel|nil
 
---- A Lead or Assist box: empty and waiting, or holding a participant. Its
---- drag state and token are fixed at construction, so the slot holding it
---- is remade when they move.
---- @param bound MTGRowBinding
---- @param slot string "lead" or "assist"
---- @param label string
---- @param inert boolean
---- @param dimmed boolean
---- @return Panel
-local function SlotBox(bound, slot, label, inert, dimmed)
-    local run = bound.run
-    local inst = bound.inst
-    local placed = inst[slot]
-
-    local classes = { "bordered", "mtgSlot" }
-    if inert then
-        classes[#classes + 1] = "disabled"
-    end
-
-    local removeMenu = nil
-    if placed ~= nil and not inert and MTGRun.CanManage(placed.charid) then
-        removeMenu = function(element)
-            element.popup = gui.ContextMenu{
-                entries = {
-                    {
-                        text = "Remove",
-                        click = function()
-                            element.popup = nil
-                            MTGRun.Unstage(bound.inst.id, slot)
-                        end,
-                    },
-                },
-            }
-        end
-    end
-
-    local children = {}
-
-    if placed ~= nil then
-        local p = MTGRun.Participant(run, placed.charid)
-        if p ~= nil then
-            local token = MTGWidgets.ParticipantToken(p, not inert, removeMenu, dimmed)
-            if token ~= nil then
-                children[#children + 1] = token
-            end
-        end
-    end
-
-    return gui.Panel{
-        classes = classes,
-        width = 46,
-        height = 46,
-        flow = "none",
-        halign = "center",
-        valign = "top",
-        dragTarget = not inert,
-        hover = THCWidgets.Tooltip(label),
-
-        dropOnSlot = function(element, charid)
-            MTGRun.Stage(bound.inst.id, slot, charid)
-        end,
-
-        rightClick = removeMenu,
-
-        press = function(element)
-            if inert or placed ~= nil then
-                return
-            end
-
-            --Read live: CanStage looks at rows this card's own data does not.
-            local current = MTGRun.Active() or bound.run
-            local entries = {}
-            for _, p in ipairs(MTGRun.StageOptions(current, bound.inst, slot)) do
-                local charid = p.charid
-                if MTGRun.CanManage(charid) then
-                    entries[#entries + 1] = {
-                        text = p.name or "",
-                        click = function()
-                            element.popup = nil
-                            MTGRun.Stage(bound.inst.id, slot, charid)
-                        end,
-                    }
-                end
-            end
-
-            if #entries == 0 then
-                entries[#entries + 1] = {
-                    text = "No one available",
-                    click = function()
-                        element.popup = nil
-                    end,
-                }
-            end
-
-            element.popup = gui.ContextMenu{ entries = entries }
-        end,
-
-        children = children,
-    }
-end
-
 --- Flags a pick the Challenge does not allow. Off-list is legal, so this
 --- informs rather than blocks.
 --- @param tooltip string
@@ -241,61 +140,6 @@ local function RollSummaryText(run, inst, ch, slot, assignment, roll)
     return string.format("**%s**", verdict), table.concat(parts, " | ")
 end
 
---- The module's question, answerable by whoever rolled and by the Director.
---- Sits in a slot remade when the prompt appears, so what it captures is
---- current for its life.
---- @param bound MTGRowBinding
---- @param prompt table
---- @param charid string the Lead who rolled
---- @return Panel
-local function PromptRow(bound, prompt, charid)
-    local children = {
-        gui.Label{
-            classes = { "sizeXs", "noBold", "fgMuted" },
-            width = "100%",
-            height = "auto",
-            halign = "left",
-            valign = "top",
-            text = prompt.text or "",
-        },
-    }
-
-    if MTGRun.CanManage(charid) then
-        local buttons = {}
-        for _, option in ipairs(prompt.options or {}) do
-            local outcome = option.outcome
-            buttons[#buttons + 1] = gui.Button{
-                classes = { "sizeXxs" },
-                width = "48%",
-                height = 22,
-                halign = "left",
-                rmargin = 4,
-                text = option.label or "",
-                click = function()
-                    MTGRun.Adjudicate(bound.inst.id, outcome)
-                end,
-            }
-        end
-
-        children[#children + 1] = gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-            tmargin = 2,
-            children = buttons,
-        }
-    end
-
-    return gui.Panel{
-        width = "100%",
-        height = "auto",
-        flow = "vertical",
-        valign = "top",
-        children = children,
-    }
-end
-
 --- A muted line of the roll summary.
 --- @return Panel
 local function SummaryLine()
@@ -311,8 +155,10 @@ local function SummaryLine()
 end
 
 --- The Lead or Assist column: the box, with its characteristic and skill
---- stacked beside it, or the roll's summary once it has rolled. Built once;
---- `setColumn` reads the bound row.
+--- stacked beside it, or the roll's summary once it has rolled, and the
+--- module's prompt under the Lead. Every part is built once. `setColumn`
+--- reads the bound row, and the handlers read it again when they fire, so a
+--- column handed a new row never acts on the last one.
 --- @param bound MTGRowBinding
 --- @param slot string
 --- @param label string
@@ -320,7 +166,93 @@ end
 local function SlotColumn(bound, slot, label)
     local shown = {}
 
-    local boxSlot = MTGWidgets.Slot{ halign = "center", valign = "top" }
+    --Whether this slot can change right now, read by the handlers.
+    local m_inert = true
+
+    --- Offer to remove whoever stands here, to someone who manages that hero,
+    --- while the slot can still change. The menu acts on the row it opened on.
+    --- @param element Panel
+    local function OfferRemove(element)
+        local inst = bound.inst
+        local placed = inst ~= nil and inst[slot] or nil
+        if placed == nil or m_inert or not MTGRun.CanManage(placed.charid) then
+            return
+        end
+
+        local instId = inst.id
+        element.popup = gui.ContextMenu{
+            entries = {
+                {
+                    text = "Remove",
+                    click = function()
+                        element.popup = nil
+                        MTGRun.Unstage(instId, slot)
+                    end,
+                },
+            },
+        }
+    end
+
+    local token = MTGWidgets.ParticipantToken()
+
+    --Empty and waiting, or holding a participant.
+    local box = gui.Panel{
+        classes = { "bordered", "mtgSlot", "disabled" },
+        width = 46,
+        height = 46,
+        flow = "none",
+        halign = "center",
+        valign = "top",
+        dragTarget = false,
+        hover = THCWidgets.Tooltip(label),
+
+        dropOnSlot = function(element, charid)
+            if bound.inst ~= nil and not m_inert then
+                MTGRun.Stage(bound.inst.id, slot, charid)
+            end
+        end,
+
+        rightClick = OfferRemove,
+
+        --An empty slot offers everyone who could stand in it. The menu acts on
+        --the row it opened on.
+        press = function(element)
+            local inst = bound.inst
+            if inst == nil or m_inert or inst[slot] ~= nil then
+                return
+            end
+
+            --Read live: CanStage looks at rows this card's own data does not.
+            local current = MTGRun.Active() or bound.run
+            local instId = inst.id
+            local entries = {}
+            for _, p in ipairs(MTGRun.StageOptions(current, inst, slot)) do
+                local charid = p.charid
+                if MTGRun.CanManage(charid) then
+                    entries[#entries + 1] = {
+                        text = p.name or "",
+                        click = function()
+                            element.popup = nil
+                            MTGRun.Stage(instId, slot, charid)
+                        end,
+                    }
+                end
+            end
+
+            if #entries == 0 then
+                entries[#entries + 1] = {
+                    text = "No one available",
+                    click = function()
+                        element.popup = nil
+                    end,
+                }
+            end
+
+            element.popup = gui.ContextMenu{ entries = entries }
+        end,
+
+        token,
+    }
 
     local attrRow = PickerRow("Not one of this challenge's characteristics", function(id)
         MTGRun.SetAssignmentCharacteristic(bound.inst.id, slot, id)
@@ -341,7 +273,66 @@ local function SlotColumn(bound, slot, label)
     local verdictLine = SummaryLine()
     local partsLine = SummaryLine()
 
-    local promptSlot = MTGWidgets.Slot{ width = "100%" }
+    local promptText = gui.Label{
+        classes = { "sizeXs", "noBold", "fgMuted" },
+        width = "100%",
+        height = "auto",
+        halign = "left",
+        valign = "top",
+        text = "",
+    }
+
+    --- One of the prompt's answers, handed its option with `setOption`.
+    --- @return Panel
+    local function PromptButton()
+        local m_outcome = nil
+        return gui.Button{
+            classes = { "sizeXxs", "collapsed" },
+            width = "48%",
+            height = 22,
+            halign = "left",
+            rmargin = 4,
+            text = "",
+
+            --- @param option nil|{label: string, outcome: table}
+            setOption = function(element, option)
+                element:SetClass("collapsed", option == nil)
+                m_outcome = option ~= nil and option.outcome or nil
+                if option ~= nil then
+                    local text = option.label or ""
+                    if element.text ~= text then
+                        element.text = text
+                    end
+                end
+            end,
+
+            click = function()
+                if bound.inst ~= nil and m_outcome ~= nil then
+                    MTGRun.Adjudicate(bound.inst.id, m_outcome)
+                end
+            end,
+        }
+    end
+
+    local promptButtons = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        valign = "top",
+        tmargin = 2,
+    }
+
+    --The module's question, answerable by whoever rolled and by the Director.
+    local promptRow = gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        promptText,
+        promptButtons,
+    }
 
     return gui.Panel{
         width = "33%",
@@ -361,16 +352,20 @@ local function SlotColumn(bound, slot, label)
             --Dimmed means spent or already acted this round; both read the same.
             local dimmed = placed ~= nil and (inert or MTGRun.HasActedThisRound(run, placed.charid))
             local canManage = placed ~= nil and MTGRun.CanManage(placed.charid)
-            local boxState = table.concat({
-                inst.id,
-                placed ~= nil and placed.charid or "",
-                tostring(inert),
-                tostring(dimmed),
-                tostring(canManage),
-            }, "|")
-            MTGWidgets.SetSlot(boxSlot, boxState, function()
-                return SlotBox(bound, slot, label, inert, dimmed)
-            end)
+
+            m_inert = inert
+            box:SetClass("disabled", inert)
+            if box.dragTarget ~= (not inert) then
+                box.dragTarget = not inert
+            end
+
+            local p = placed ~= nil and MTGRun.Participant(run, placed.charid) or nil
+            token:FireEvent("setParticipant", p ~= nil and {
+                p = p,
+                draggable = not inert,
+                dimmed = dimmed,
+                onRightClick = OfferRemove,
+            } or nil)
 
             local locked = inst.adjudicatedInRound ~= nil or inst.resolution ~= nil
             local editable = placed ~= nil and not locked and canManage
@@ -421,18 +416,19 @@ local function SlotColumn(bound, slot, label)
             if roll ~= nil and slot == "lead" then
                 prompt = MTGResolver.PendingPrompt(run, inst)
             end
-            local promptState = ""
+            promptRow:SetClass("collapsed", prompt == nil)
             if prompt ~= nil then
-                promptState = table.concat({
-                    inst.id,
-                    tostring(prompt.id),
-                    placed.charid,
-                    tostring(MTGRun.CanManage(placed.charid)),
-                }, "|")
+                local text = prompt.text or ""
+                if promptText.text ~= text then
+                    promptText.text = text
+                end
+                local options = {}
+                if MTGRun.CanManage(placed.charid) then
+                    options = prompt.options or {}
+                end
+                promptButtons:SetClass("collapsed", #options == 0)
+                THCWidgets.BindList(promptButtons, options, PromptButton, "setOption")
             end
-            MTGWidgets.SetSlot(promptSlot, promptState, function()
-                return PromptRow(bound, prompt, placed.charid)
-            end)
         end,
 
         gui.Panel{
@@ -443,7 +439,7 @@ local function SlotColumn(bound, slot, label)
             valign = "top",
             rmargin = 8,
 
-            boxSlot,
+            box,
 
             gui.Label{
                 classes = { "sizeXs", "noBold", "fgMuted" },
@@ -468,7 +464,7 @@ local function SlotColumn(bound, slot, label)
             rollingLabel,
             verdictLine,
             partsLine,
-            promptSlot,
+            promptRow,
         },
     }
 end
@@ -529,39 +525,6 @@ local function OutcomeRevealed(run, ch)
     return not resolved
 end
 
---- The Director's live switch for the Outcome line on the players' card. The
---- eye reports what was authored: once the Outcome has landed the table reads
---- it either way, and the tooltip says so rather than lighting an eye nobody
---- set.
---- @param run MTGRun
---- @param ch MTGChallengeDef
---- @return Panel
-local function OutcomeEye(run, ch)
-    local shown = MTGRun.IsOutcomeShown(run, ch.id)
-    local landed = not shown and OutcomeRevealed(run, ch)
-
-    local tip = "Kept from the table until it lands. Press to show it now."
-    if landed then
-        tip = "This Outcome has landed, so the table reads it either way."
-    elseif shown then
-        tip = "The table can read this Outcome. Press to keep it back."
-    end
-
-    return gui.Button{
-        classes = { "sizeXs" },
-        icon = cond(shown, "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"),
-        width = 16,
-        height = 16,
-        halign = "left",
-        valign = "top",
-        rmargin = 6,
-        hover = THCWidgets.Tooltip(tip),
-        click = function()
-            MTGRun.SetOutcomeShown(ch.id, not shown)
-        end,
-    }
-end
-
 --- The heroes who rolled - or, for the folded strip, whoever is placed - as
 --- token entries. Small and in full colour: unlike the slots, which grey a
 --- spent token out, this is a summary and wants to be readable.
@@ -586,35 +549,57 @@ local function RollerEntries(run, inst, always)
     return result
 end
 
---- One token per entry in a strip, each in a slot remade only when its hero
---- or its slot moves: a portrait is a new panel per hero.
+--- One roller's portrait in the header strip, built once and handed an
+--- entry with `setToken`. The engine's token image is retargeted rather than
+--- remade when the hero moves. Handed nil, it collapses.
+--- @return Panel
+local function RollerToken()
+    local image = gui.CreateTokenImage(nil, {
+        width = "100%",
+        height = "100%",
+        halign = "center",
+        valign = "center",
+    })
+
+    local shown = {}
+
+    return gui.Panel{
+        classes = { "collapsed" },
+        width = 22,
+        height = 22,
+        halign = "right",
+        valign = "center",
+        lmargin = 3,
+
+        --- @param entry nil|{charid: string, slot: string, name: string}
+        setToken = function(element, entry)
+            local token = entry ~= nil and dmhub.GetCharacterById(entry.charid) or nil
+            element:SetClass("collapsed", token == nil)
+            if token == nil then
+                return
+            end
+
+            if shown.charid ~= entry.charid then
+                shown.charid = entry.charid
+                MTGWidgets.RetargetPortrait(image, token)
+            end
+
+            local tip = string.format("%s (%s)", entry.name, entry.slot)
+            if shown.tip ~= tip then
+                shown.tip = tip
+                element.tooltip = THCWidgets.Tooltip(tip)
+            end
+        end,
+
+        image,
+    }
+end
+
+--- One portrait per entry in a strip, pooled and rebound.
 --- @param strip Panel
 --- @param entries table[] RollerEntries
 local function BindTokens(strip, entries)
-    THCWidgets.BindList(strip, entries, function()
-        return MTGWidgets.Slot{
-            setToken = function(slot, entry)
-                local state = ""
-                if entry ~= nil then
-                    state = entry.charid .. "|" .. entry.slot
-                end
-                MTGWidgets.SetSlot(slot, state, function()
-                    local token = dmhub.GetCharacterById(entry.charid)
-                    if token == nil then
-                        return nil
-                    end
-                    return gui.CreateTokenImage(token, {
-                        width = 22,
-                        height = 22,
-                        halign = "right",
-                        valign = "center",
-                        lmargin = 3,
-                        hover = THCWidgets.Tooltip(string.format("%s (%s)", entry.name, entry.slot)),
-                    })
-                end)
-            end,
-        }
-    end, "setToken")
+    THCWidgets.BindList(strip, entries, RollerToken, "setToken")
 end
 
 --- A header badge whose image, tone and tooltip are patched onto it, so it
@@ -821,163 +806,28 @@ local function BadgeBar(bound, director)
     }
 end
 
---- Everything the meta lines show or hide, as one string.
+--- What the meta area shows for one state of the row, as data: a column of
+--- lines beside the slots, and a band beneath them holding the Outcome and
+--- the Director's notes. Each entry names its shape, so one pooled row can
+--- present any of them and field order survives. Hidden means absent, not
+--- blanked.
 --- @param run MTGRun
 --- @param inst table
 --- @param ch MTGChallengeDef
---- @return string
-local function MetaState(run, inst, ch)
-    local parts = { inst.id, ch.id, tostring(inst.adjudicatedInRound ~= nil) }
-    for _, entry in ipairs(ModuleFields(run, ch)) do
-        parts[#parts + 1] = string.format("%s=%s=%s=%s", entry.label, entry.value,
-            tostring(entry.raw), tostring(entry.field.liveEditable == true))
-    end
-    parts[#parts + 1] = tostring(MTGRun.IsDifficultyHidden(run, ch.id))
-    parts[#parts + 1] = tostring(MTGRun.IsOutcomeShown(run, ch.id))
-    --OutcomeRevealed reads the T&O type field, which only T&O has.
-    parts[#parts + 1] = tostring(run.moduleId == MTGConstants.moduleTO and OutcomeRevealed(run, ch))
-    parts[#parts + 1] = THCUtils.NameList(
-        ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any")
-    parts[#parts + 1] = THCUtils.NameList(
-        ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none")
-    return table.concat(parts, "|")
-end
-
---- The module's fields, the characteristics and the skills, one line each:
---- a column beside the slots, and the Outcome with the notes under it as a
---- band beneath them. Both built for one state of the row and remade
---- together when MetaState moves.
---- @param bound MTGRowBinding
 --- @param director boolean
---- @return Panel column
---- @return Panel notes
-local function MetaLines(bound, director)
-    local run = bound.run
-    local inst = bound.inst
-    local ch = bound.ch
+--- @return table[] column
+--- @return table[] band
+local function MetaEntries(run, inst, ch, director)
     local adjudicated = inst.adjudicatedInRound ~= nil
-
-    --- @param trailing nil|Panel a control sitting against the label
-    local function MetaLine(label, value, trailing)
-        local text = gui.Label{
-            classes = { "sizeS", "fgMuted" },
-            width = cond(trailing == nil, "100%", "100%-22"),
-            height = "auto",
-            halign = "left",
-            valign = "top",
-            markdown = true,
-            text = string.format("**%s:** %s", label, value),
-        }
-
-        if trailing == nil then
-            return text
-        end
-
-        --The control leads: a trailing one would land past the wrapped value.
-        return gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            trailing,
-            text,
-        }
-    end
-
-    --The Director's note on a Challenge, the label over a full-width field,
-    --written on commit so a refresh mid-word cannot take the caret.
-    local function MetaText(entry)
-        return gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "vertical",
-            valign = "top",
-
-            gui.Label{
-                classes = { "sizeS", "fgMuted" },
-                width = "100%",
-                height = "auto",
-                halign = "left",
-                valign = "top",
-                markdown = true,
-                text = string.format("**%s:**", entry.label),
-            },
-
-            gui.Input{
-                classes = { "input", "sizeS" },
-                height = MTGConstants.noteInputHeight,
-                width = "100%-16",
-                halign = "left",
-                valign = "top",
-                text = tostring(entry.raw or ""),
-                characterLimit = 200,
-                change = function(element)
-                    MTGRun.SetChallengeField(bound.ch.id, entry.field.id, element.text or "")
-                end,
-            },
-        }
-    end
-
-    --The control going away stops a late change looking like a rewritten verdict.
-    local function MetaChoice(entry)
-        return gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "horizontal",
-            valign = "top",
-
-            gui.Label{
-                classes = { "sizeS", "fgMuted" },
-                width = "auto",
-                height = "auto",
-                halign = "left",
-                valign = "center",
-                rmargin = 4,
-                markdown = true,
-                text = string.format("**%s:**", entry.label),
-            },
-
-            gui.Dropdown{
-                width = "50%",
-                halign = "left",
-                valign = "center",
-                options = entry.field.options,
-                idChosen = entry.raw,
-                change = function(element)
-                    MTGRun.SetChallengeField(bound.ch.id, entry.field.id, element.idChosen)
-                end,
-            },
-
-            entry.field.id == "difficulty" and gui.Button{
-                classes = { "sizeXs" },
-                icon = cond(MTGRun.IsDifficultyHidden(run, ch.id),
-                    "phosphor/eye-slash-duotone.png", "phosphor/eye-bold.png"),
-                width = 16,
-                height = 16,
-                halign = "left",
-                valign = "center",
-                lmargin = 6,
-                hover = THCWidgets.Tooltip(cond(MTGRun.IsDifficultyHidden(run, ch.id),
-                    "Difficulty hidden from the table. Press to show it.",
-                    "The table can see the difficulty. Press to hide it.")),
-                click = function()
-                    MTGRun.SetDifficultyHidden(bound.ch.id,
-                        not MTGRun.IsDifficultyHidden(run, ch.id))
-                end,
-            } or nil,
-        }
-    end
-
     local column = {}
-    --The Outcome and the notes under it span the card, beneath the columns.
-    local notes = {}
+    local band = {}
+
     for _, entry in ipairs(ModuleFields(run, ch)) do
-        local isOutcome = entry.field.id == "outcome"
+        local fieldId = entry.field.id
+        local isOutcome = fieldId == "outcome"
             and run.moduleId == MTGConstants.moduleTO
 
-        --Hidden means absent, not blanked.
-        local suppressed = (entry.field.id == "difficulty"
+        local suppressed = (fieldId == "difficulty"
                 and not director
                 and MTGRun.IsDifficultyHidden(run, ch.id))
             or (isOutcome and not director and not OutcomeRevealed(run, ch))
@@ -989,39 +839,320 @@ local function MetaLines(bound, director)
             and entry.field.liveEditable == true
             and entry.field.type == "choice"
             and #(entry.field.options or {}) > 0 then
-            column[#column + 1] = MetaChoice(entry)
+            --The control going away stops a late change looking like a
+            --rewritten verdict.
+            local line = {
+                kind = "choice",
+                label = entry.label,
+                fieldId = fieldId,
+                options = entry.field.options,
+                raw = entry.raw,
+            }
+            if fieldId == "difficulty" then
+                local hidden = MTGRun.IsDifficultyHidden(run, ch.id)
+                line.eye = "difficulty"
+                line.eyeOpen = not hidden
+                line.eyeTip = cond(hidden,
+                    "Difficulty hidden from the table. Press to show it.",
+                    "The table can see the difficulty. Press to hide it.")
+            end
+            column[#column + 1] = line
         elseif dmhub.isDM and entry.field.liveEditable == true
             and entry.field.type == "text" then
-            notes[#notes + 1] = MetaText(entry)
+            band[#band + 1] = {
+                kind = "note",
+                label = entry.label,
+                fieldId = fieldId,
+                raw = entry.raw,
+            }
         elseif isOutcome then
-            --cond builds both arms, and an eye a player never sees would be
-            --an orphan panel.
-            notes[#notes + 1] = MetaLine(entry.label, entry.value,
-                director and OutcomeEye(run, ch) or nil)
+            local line = {
+                kind = "line",
+                label = entry.label,
+                value = entry.value,
+            }
+            --The eye reports what was authored: once the Outcome has landed the
+            --table reads it either way, and the tooltip says so rather than
+            --lighting an eye nobody set.
+            if director then
+                local shown = MTGRun.IsOutcomeShown(run, ch.id)
+                line.eye = "outcome"
+                line.eyeOpen = shown
+                if shown then
+                    line.eyeTip = "The table can read this Outcome. Press to keep it back."
+                elseif OutcomeRevealed(run, ch) then
+                    line.eyeTip = "This Outcome has landed, so the table reads it either way."
+                else
+                    line.eyeTip = "Kept from the table until it lands. Press to show it now."
+                end
+            end
+            band[#band + 1] = line
         else
-            column[#column + 1] = MetaLine(entry.label, entry.value)
+            column[#column + 1] = {
+                kind = "line",
+                label = entry.label,
+                value = entry.value,
+            }
         end
     end
-    column[#column + 1] = MetaLine("Characteristics", THCUtils.NameList(
-        ch:try_get("allowedCharacteristics", {}), THCUtils.CharacteristicName, "any"))
-    column[#column + 1] = MetaLine("Skills", THCUtils.NameList(
-        ch:try_get("allowedSkills", {}), THCUtils.SkillName, "none"))
 
-    local function Stack(children)
-        return gui.Panel{
-            width = "100%",
-            height = "auto",
-            flow = "vertical",
-            halign = "left",
-            valign = "top",
-            children = children,
-        }
+    column[#column + 1] = {
+        kind = "line",
+        label = "Characteristics",
+        value = THCUtils.NameList(ch:try_get("allowedCharacteristics", {}),
+            THCUtils.CharacteristicName, "any"),
+    }
+    column[#column + 1] = {
+        kind = "line",
+        label = "Skills",
+        value = THCUtils.NameList(ch:try_get("allowedSkills", {}),
+            THCUtils.SkillName, "none"),
+    }
+
+    return column, band
+end
+
+--- One line of the meta area, built once and handed an entry with
+--- `setMeta`: a plain line, with the Outcome's eye leading it when it has
+--- one; a live choice, with the difficulty's eye after it; or the Director's
+--- note, the label over a full-width field. It holds all three and shows the
+--- one its entry names. Handed nil, it collapses.
+---
+--- The note is written on commit, and its field is only refilled when the
+--- committed value moves, so neither the echo of the Director's own write nor
+--- any other change to the row takes the caret.
+--- @param bound MTGRowBinding
+--- @return Panel
+local function MetaRow(bound)
+    local shown = {}
+
+    --The field this row edits, read by the handlers when they fire.
+    local m_fieldId = nil
+
+    --- Show an eye's state; open means the table can see it.
+    --- @param eye Panel
+    --- @param key string this eye's memo slot
+    --- @param open boolean
+    --- @param tip string
+    local function PatchEye(eye, key, open, tip)
+        if shown[key .. "Open"] ~= open then
+            shown[key .. "Open"] = open
+            eye:FireEvent("setIcon",
+                cond(open, "phosphor/eye-bold.png", "phosphor/eye-slash-duotone.png"))
+        end
+        if shown[key .. "Tip"] ~= tip then
+            shown[key .. "Tip"] = tip
+            eye.tooltip = THCWidgets.Tooltip(tip)
+        end
     end
-    return Stack(column), Stack(notes)
+
+    --- @param label Panel
+    --- @param text string
+    local function SetText(label, text)
+        if label.text ~= text then
+            label.text = text
+        end
+    end
+
+    local outcomeEye = gui.Button{
+        classes = { "sizeXs", "collapsed" },
+        icon = "phosphor/eye-slash-duotone.png",
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "top",
+        rmargin = 6,
+        click = function()
+            local run = bound.run
+            local ch = bound.ch
+            if run ~= nil and ch ~= nil then
+                MTGRun.SetOutcomeShown(ch.id, not MTGRun.IsOutcomeShown(run, ch.id))
+            end
+        end,
+    }
+
+    local lineText = gui.Label{
+        classes = { "sizeS", "fgMuted" },
+        width = "100%",
+        height = "auto",
+        halign = "left",
+        valign = "top",
+        markdown = true,
+        text = "",
+    }
+
+    --The eye leads: a trailing one would land past the wrapped value.
+    local lineRow = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        valign = "top",
+
+        outcomeEye,
+        lineText,
+    }
+
+    local choiceLabel = gui.Label{
+        classes = { "sizeS", "fgMuted" },
+        width = "auto",
+        height = "auto",
+        halign = "left",
+        valign = "center",
+        rmargin = 4,
+        markdown = true,
+        text = "",
+    }
+
+    local dropdown = gui.Dropdown{
+        width = "50%",
+        halign = "left",
+        valign = "center",
+        options = {},
+        idChosen = "",
+        change = function(element)
+            local ch = bound.ch
+            if ch ~= nil and m_fieldId ~= nil then
+                MTGRun.SetChallengeField(ch.id, m_fieldId, element.idChosen)
+            end
+        end,
+    }
+
+    local difficultyEye = gui.Button{
+        classes = { "sizeXs", "collapsed" },
+        icon = "phosphor/eye-bold.png",
+        width = 16,
+        height = 16,
+        halign = "left",
+        valign = "center",
+        lmargin = 6,
+        click = function()
+            local run = bound.run
+            local ch = bound.ch
+            if run ~= nil and ch ~= nil then
+                MTGRun.SetDifficultyHidden(ch.id, not MTGRun.IsDifficultyHidden(run, ch.id))
+            end
+        end,
+    }
+
+    local choiceRow = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "horizontal",
+        valign = "top",
+
+        choiceLabel,
+        dropdown,
+        difficultyEye,
+    }
+
+    local noteLabel = gui.Label{
+        classes = { "sizeS", "fgMuted" },
+        width = "100%",
+        height = "auto",
+        halign = "left",
+        valign = "top",
+        markdown = true,
+        text = "",
+    }
+
+    local noteInput = gui.Input{
+        classes = { "input", "sizeS" },
+        height = MTGConstants.noteInputHeight,
+        width = "100%-16",
+        halign = "left",
+        valign = "top",
+        text = "",
+        characterLimit = 200,
+        change = function(element)
+            local ch = bound.ch
+            if ch ~= nil and m_fieldId ~= nil then
+                MTGRun.SetChallengeField(ch.id, m_fieldId, element.text or "")
+            end
+        end,
+    }
+
+    local noteGroup = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        noteLabel,
+        noteInput,
+    }
+
+    return gui.Panel{
+        classes = { "collapsed" },
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        halign = "left",
+        valign = "top",
+
+        --- @param entry nil|table a MetaEntries line
+        setMeta = function(element, entry)
+            element:SetClass("collapsed", entry == nil)
+            if entry == nil then
+                m_fieldId = nil
+                return
+            end
+
+            m_fieldId = entry.fieldId
+            lineRow:SetClass("collapsed", entry.kind ~= "line")
+            choiceRow:SetClass("collapsed", entry.kind ~= "choice")
+            noteGroup:SetClass("collapsed", entry.kind ~= "note")
+
+            if entry.kind == "line" then
+                local hasEye = entry.eye == "outcome"
+                outcomeEye:SetClass("collapsed", not hasEye)
+                local width = cond(hasEye, "100%-22", "100%")
+                if shown.lineWidth ~= width then
+                    shown.lineWidth = width
+                    lineText.selfStyle.width = width
+                end
+                SetText(lineText, string.format("**%s:** %s", entry.label, entry.value))
+                if hasEye then
+                    PatchEye(outcomeEye, "outcome", entry.eyeOpen, entry.eyeTip)
+                end
+            elseif entry.kind == "choice" then
+                SetText(choiceLabel, string.format("**%s:**", entry.label))
+                if not dmhub.DeepEqual(dropdown.options, entry.options) then
+                    dropdown.options = entry.options
+                end
+                if dropdown.idChosen ~= entry.raw then
+                    dropdown.idChosen = entry.raw
+                end
+                local hasEye = entry.eye == "difficulty"
+                difficultyEye:SetClass("collapsed", not hasEye)
+                if hasEye then
+                    PatchEye(difficultyEye, "difficulty", entry.eyeOpen, entry.eyeTip)
+                end
+            else
+                SetText(noteLabel, string.format("**%s:**", entry.label))
+                --Keyed by row and field, so a row handed a different note is
+                --refilled even when the text happens to match.
+                local key = (bound.ch ~= nil and bound.ch.id or "") .. "/" .. tostring(entry.fieldId)
+                local committed = tostring(entry.raw or "")
+                if shown.noteKey ~= key or shown.noteText ~= committed then
+                    shown.noteKey = key
+                    shown.noteText = committed
+                    if noteInput.text ~= committed then
+                        noteInput.text = committed
+                    end
+                end
+            end
+        end,
+
+        lineRow,
+        choiceRow,
+        noteGroup,
+    }
 end
 
 --- One attempt row's card. Built once and handed a row with `setRow`;
 --- handed nil, or a row whose Challenge is gone, it collapses and waits.
+--- Nothing inside it is remade either: every part is built here and rebound,
+--- and its lists are pools.
 --- @param director boolean
 --- @param expanded table<string, boolean> this client's overrides, by instance
 --- @return Panel
@@ -1051,8 +1182,28 @@ function MTGChallengeCard.Create(director, expanded)
         text = "",
     }
 
-    local metaSlot = MTGWidgets.Slot{ width = "34%", height = "auto", valign = "top" }
-    local noteSlot = MTGWidgets.Slot{ width = "100%", height = "auto", valign = "top" }
+    --The meta column beside the slots and the band beneath them, both pools of
+    --meta rows rebound on every refresh.
+    local metaColumn = gui.Panel{
+        width = "34%",
+        height = "auto",
+        flow = "vertical",
+        halign = "left",
+        valign = "top",
+    }
+    local noteBand = gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        halign = "left",
+        valign = "top",
+    }
+
+    --- @return Panel
+    local function NewMetaRow()
+        return MetaRow(bound)
+    end
+
     local leadColumn = SlotColumn(bound, "lead", "Lead")
     local assistColumn = SlotColumn(bound, "assist", "Assist")
 
@@ -1071,12 +1222,12 @@ function MTGChallengeCard.Create(director, expanded)
             valign = "top",
             tmargin = 4,
 
-            metaSlot,
+            metaColumn,
             leadColumn,
             assistColumn,
         },
 
-        noteSlot,
+        noteBand,
     }
 
     --Director side stays live: that is where the roll is taken back.
@@ -1174,15 +1325,9 @@ function MTGChallengeCard.Create(director, expanded)
 
             badgeBar:FireEvent("refreshBadges")
 
-            --The two slots move together, so the inner build always runs.
-            local metaState = MetaState(run, inst, ch)
-            MTGWidgets.SetSlot(metaSlot, metaState, function()
-                local column, notes = MetaLines(bound, director)
-                MTGWidgets.SetSlot(noteSlot, metaState, function()
-                    return notes
-                end)
-                return column
-            end)
+            local column, band = MetaEntries(run, inst, ch, director)
+            THCWidgets.BindList(metaColumn, column, NewMetaRow, "setMeta")
+            THCWidgets.BindList(noteBand, band, NewMetaRow, "setMeta")
 
             leadColumn:FireEvent("setColumn")
             assistColumn:FireEvent("setColumn")

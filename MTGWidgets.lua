@@ -23,41 +23,45 @@ function MTGWidgets.ToneClass(tone)
 end
 
 
---- A participant token that can be dragged onto a slot. The drag props have
---- to live on a panel we build: gui.CreateTokenImage makes its own panel and
---- does not forward them, so the image goes inside as a child.
---- @param p MTGParticipant
---- @param draggable boolean
---- @param rightClick fun(element: Panel)|nil
---- @param dimmed nil|boolean the theme's disabled idiom, which is desaturation
---- @return Panel|nil
-function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
-    local token = dmhub.GetCharacterById(p.charid)
-    if token == nil then
-        return nil
+--- Point an engine token image at a different token. Its `token` event
+--- retargets portrait and frame, but a tree event skips collapsed panels, so a
+--- folded card would keep its old portrait. Each part is fired directly
+--- instead, the image itself first: its handler stores the token its parts
+--- read.
+--- @param image Panel made by gui.CreateTokenImage
+--- @param token token
+function MTGWidgets.RetargetPortrait(image, token)
+    image:FireEvent("token", token)
+    for _, child in ipairs(image.children or {}) do
+        child:FireEvent("token", token)
     end
+end
 
-    local mine = MTGRun.CanManage(p.charid)
-
-    local image = gui.CreateTokenImage(token, {
+--- A participant token that can be dragged onto a slot, built once and
+--- pointed at a participant with `setParticipant`. Handed nil, it collapses.
+---
+--- The drag props live on a panel we build, because gui.CreateTokenImage
+--- makes its own panel and does not forward them, so the image sits inside as
+--- a child. Drag and right-click read the token's current binding when they
+--- fire, so a token handed someone new never acts for whoever it showed last.
+--- @return Panel
+function MTGWidgets.ParticipantToken()
+    local image = gui.CreateTokenImage(nil, {
         width = "100%",
         height = "100%",
         halign = "center",
         valign = "center",
     })
 
-    --The frame is a separate child, so desaturate the children too.
-    if dimmed == true then
-        image.selfStyle.saturation = 0
-        for _, child in ipairs(image.children or {}) do
-            child.selfStyle.saturation = 0
-        end
-    end
+    local shown = {}
+
+    --- Who the token stands for, and what a right-click does, read by the
+    --- handlers when they fire.
+    local m_charid = nil
+    local m_onRightClick = nil
 
     return gui.Panel{
-        rightClick = cond(mine, rightClick),
-
-        classes = { "mtgToken" },
+        classes = { "mtgToken", "collapsed" },
         width = 40,
         height = 40,
         halign = "left",
@@ -65,26 +69,71 @@ function MTGWidgets.ParticipantToken(p, draggable, rightClick, dimmed)
         hmargin = 2,
         bgimage = true,
         bgcolor = "clear",
-        draggable = draggable and mine,
+        draggable = false,
 
         canDragOnto = function(element, target)
             return target:HasClass("mtgSlot") or target:HasClass("mtgTray")
         end,
 
         drag = function(element, target)
-            if target == nil then
+            if target == nil or m_charid == nil then
                 return
             end
             if target:HasClass("mtgTray") then
-                target:FireEvent("dropToTray", p.charid)
+                target:FireEvent("dropToTray", m_charid)
             else
-                target:FireEvent("dropOnSlot", p.charid)
+                target:FireEvent("dropOnSlot", m_charid)
             end
         end,
 
-        hover = THCWidgets.Tooltip(p.name or ""),
+        rightClick = function(element)
+            if m_onRightClick ~= nil then
+                m_onRightClick(element)
+            end
+        end,
 
-        data = { charid = p.charid },
+        --- `dimmed` is the theme's disabled idiom, which is desaturation. The
+        --- right-click only answers someone who manages this hero.
+        --- @param entry nil|{p: MTGParticipant, draggable: boolean, dimmed: boolean, onRightClick: nil|fun(element: Panel)}
+        setParticipant = function(element, entry)
+            local token = entry ~= nil and dmhub.GetCharacterById(entry.p.charid) or nil
+            element:SetClass("collapsed", token == nil)
+            if token == nil then
+                m_charid = nil
+                m_onRightClick = nil
+                return
+            end
+
+            local mine = MTGRun.CanManage(entry.p.charid)
+            m_charid = entry.p.charid
+            m_onRightClick = mine and entry.onRightClick or nil
+
+            local draggable = entry.draggable == true and mine
+            if element.draggable ~= draggable then
+                element.draggable = draggable
+            end
+
+            if shown.charid ~= m_charid then
+                shown.charid = m_charid
+                MTGWidgets.RetargetPortrait(image, token)
+            end
+
+            local name = entry.p.name or ""
+            if shown.name ~= name then
+                shown.name = name
+                element.tooltip = THCWidgets.Tooltip(name)
+            end
+
+            --The frame is a separate child, so it is desaturated too.
+            local saturation = cond(entry.dimmed == true, 0, 1)
+            if shown.saturation ~= saturation then
+                shown.saturation = saturation
+                image.selfStyle.saturation = saturation
+                for _, child in ipairs(image.children or {}) do
+                    child.selfStyle.saturation = saturation
+                end
+            end
+        end,
 
         image,
     }
@@ -94,8 +143,7 @@ end
 --- The round's free participant tokens: everyone not currently standing on a
 --- test still in play. Anyone who already took a test this round is here too,
 --- greyed, and can take another. Built once and handed the free participants
---- with `setTray`; a token's portrait, drag and dimming are fixed at
---- construction, so each sits in a slot remade when its state moves.
+--- with `setTray`, which rebinds a pool of tokens rather than remaking them.
 --- @param onReturn fun(charid: string)
 --- @return Panel
 function MTGWidgets.Tray(onReturn)
@@ -135,20 +183,15 @@ function MTGWidgets.Tray(onReturn)
         --- @param entries {p: MTGParticipant, dimmed: boolean}[]
         setTray = function(element, entries)
             emptyLabel:SetClass("collapsed", #entries > 0)
-            THCWidgets.BindList(tokens, entries, function()
-                return MTGWidgets.Slot{
-                    setToken = function(slot, entry)
-                        local state = ""
-                        if entry ~= nil then
-                            state = entry.p.charid .. "|" .. tostring(entry.dimmed)
-                                .. "|" .. tostring(MTGRun.CanManage(entry.p.charid))
-                        end
-                        MTGWidgets.SetSlot(slot, state, function()
-                            return MTGWidgets.ParticipantToken(entry.p, true, nil, entry.dimmed)
-                        end)
-                    end,
+            local tokenEntries = {}
+            for i, entry in ipairs(entries) do
+                tokenEntries[i] = {
+                    p = entry.p,
+                    draggable = true,
+                    dimmed = entry.dimmed,
                 }
-            end, "setToken")
+            end
+            THCWidgets.BindList(tokens, tokenEntries, MTGWidgets.ParticipantToken, "setParticipant")
         end,
 
         tokens,

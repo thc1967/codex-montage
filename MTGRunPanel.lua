@@ -218,40 +218,42 @@ function MTGRunPanel.Create(opts)
         valign = "top",
     }
 
-    --- A participant's portrait, crowned when they led the test. The crown
-    --- floats over the corner rather than taking a column of its own.
-    --- @param p MTGParticipant
-    --- @param lead boolean
-    --- @return Panel|nil
-    local function SummaryToken(p, lead)
-        local portrait = MTGWidgets.ParticipantToken(p, false, nil, false)
-        if portrait == nil then
-            return nil
-        end
+    --- A participant's portrait, crowned when they led the test, built once
+    --- and handed an entry with `setToken`. The crown floats over the corner
+    --- rather than taking a column of its own. Handed nil, it collapses.
+    --- @return Panel
+    local function SummaryToken()
+        local portrait = MTGWidgets.ParticipantToken()
 
-        if not lead then
-            return portrait
-        end
+        local crown = gui.Panel{
+            classes = { "bgAccent", "collapsed" },
+            floating = true,
+            interactable = false,
+            width = 16,
+            height = 16,
+            halign = "right",
+            valign = "top",
+            bgimage = "phosphor/crown-duotone.png",
+        }
 
+        --44 wide either way: the portrait's own margins take the same room.
         return gui.Panel{
+            classes = { "collapsed" },
             width = 44,
             height = 40,
             flow = "none",
             halign = "left",
             valign = "center",
 
-            portrait,
+            --- @param entry nil|{p: table, lead: boolean}
+            setToken = function(element, entry)
+                element:SetClass("collapsed", entry == nil)
+                portrait:FireEvent("setParticipant", entry ~= nil and { p = entry.p } or nil)
+                crown:SetClass("collapsed", entry == nil or not entry.lead)
+            end,
 
-            gui.Panel{
-                classes = { "bgAccent" },
-                floating = true,
-                interactable = false,
-                width = 16,
-                height = 16,
-                halign = "right",
-                valign = "top",
-                bgimage = "phosphor/crown-duotone.png",
-            },
+            portrait,
+            crown,
         }
     end
 
@@ -315,19 +317,7 @@ function MTGRunPanel.Create(opts)
                 if item.inst.assist ~= nil then
                     entries[#entries + 1] = { p = item.inst.assist, lead = false }
                 end
-                THCWidgets.BindList(tokens, entries, function()
-                    return MTGWidgets.Slot{
-                        setToken = function(slot, entry)
-                            local state = ""
-                            if entry ~= nil then
-                                state = entry.p.charid .. "|" .. tostring(entry.lead)
-                            end
-                            MTGWidgets.SetSlot(slot, state, function()
-                                return SummaryToken(entry.p, entry.lead)
-                            end)
-                        end,
-                    }
-                end, "setToken")
+                THCWidgets.BindList(tokens, entries, SummaryToken, "setToken")
 
                 local name = item.ch.name or ""
                 if shown.name ~= name then
