@@ -10,6 +10,8 @@ MTGConstants.dialogId = "mtgmontage"
 MTGConstants.panelName = "Montage"          -- keys the launchable panel and the presented dialog
 MTGConstants.panelTitle = "Montage Tests"
 MTGConstants.playerPanelTitle = "Montage Test"
+MTGConstants.icon = "game-icons/bookmarklet.png"
+MTGConstants.tableIconKind = "thcmontage"   -- keys a montage's icon on the Director's tabletop
 
 MTGConstants.windowWidth = 1220
 MTGConstants.windowHeight = 780

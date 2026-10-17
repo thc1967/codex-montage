@@ -430,7 +430,7 @@ GameHud.RegisterPresentableDialog{
 LaunchablePanel.Register{
     name = MTGConstants.panelName,
     menu = "game",
-    icon = "game-icons/bookmarklet.png",
+    icon = MTGConstants.icon,
     halign = "center",
     valign = "center",
     content = function()
@@ -439,6 +439,41 @@ LaunchablePanel.Register{
         end
         return MTGDialog.CreatePlayerView()
     end,
+}
+
+--- The hover's details line for a montage's table icon.
+--- @param defid string
+--- @return string[]
+local function TableIconDetails(defid)
+    local lines = {}
+    local def = MTGDefinition.GetByID(defid)
+    if def ~= nil then
+        lines[#lines + 1] = MTGRules.Name(def.moduleId)
+        local count = #(def:try_get("challenges") or {})
+        lines[#lines + 1] = string.format("%d %s", count, cond(count == 1, "challenge", "challenges"))
+    end
+    local run = MTGRun.ActiveFor(defid)
+    if run ~= nil and run.status == MTGConstants.statusRunning then
+        lines[#lines + 1] = cond(run.paused == true, "Paused", "Running")
+    elseif run ~= nil and run.status == MTGConstants.statusSetup then
+        lines[#lines + 1] = "Setting up"
+    end
+    lines[#lines + 1] = "Click to open"
+    return lines
+end
+
+THCWidgets.RegisterTableIcon{
+    kind = MTGConstants.tableIconKind,
+    icon = MTGConstants.icon,
+    exists = function(defid)
+        return MTGDefinition.GetByID(defid) ~= nil
+    end,
+    name = function(defid)
+        local def = MTGDefinition.GetByID(defid)
+        return def ~= nil and def.name or ""
+    end,
+    details = TableIconDetails,
+    open = MTGDialog.Open,
 }
 
 THCCommands.RegisterSlugMacro{

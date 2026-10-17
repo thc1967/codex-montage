@@ -117,7 +117,7 @@ local function CreateRow(onSelect, indent)
 
         draggable = true,
         canDragOnto = function(element, target)
-            return target ~= nil and target:HasClass(DROP_CLASS)
+            return target ~= nil and target:HasClass(DROP_CLASS) and THCWidgets.RowOverWindow()
         end,
 
         beginDrag = function(element)
@@ -127,10 +127,18 @@ local function CreateRow(onSelect, indent)
             end
         end,
 
+        --Dragged out over the bare table, the montage's icon follows the mouse.
+        dragging = function(element, target)
+            THCWidgets.TableIconDragging(element, MTGConstants.tableIconKind, bound.defid)
+        end,
+
         drag = function(element, target)
             local controller = element:FindParentWithClass("mtgLibrary")
             if controller ~= nil then
                 controller:FireEventTree("setDragging", false)
+            end
+            if THCWidgets.TableIconDropped(element, MTGConstants.tableIconKind, bound.defid) then
+                return
             end
             if target ~= nil then
                 MTGDefinition.SetFolder(bound.defid, target.data.folderId or "")
@@ -202,30 +210,40 @@ local function CreateRow(onSelect, indent)
                 hover = THCWidgets.Tooltip("More"),
                 click = function(element)
                     local defid = bound.defid
-                    element.popup = gui.ContextMenu{
-                        entries = {
-                            {
-                                text = "Copy Slug",
-                                click = function()
-                                    element.popup = nil
-                                    dmhub.CopyToClipboard(MTGDefinition.EnsureSlug(defid))
-                                end,
-                            },
-                            {
-                                text = "Duplicate",
-                                click = function()
-                                    element.popup = nil
-                                    MTGDefinition.Duplicate(defid)
-                                end,
-                            },
-                            {
-                                text = "Delete",
-                                click = function()
-                                    element.popup = nil
-                                    MTGDefinition.Delete(defid)
-                                end,
-                            },
+                    local entries = {
+                        {
+                            text = "Copy Slug",
+                            click = function()
+                                element.popup = nil
+                                dmhub.CopyToClipboard(MTGDefinition.EnsureSlug(defid))
+                            end,
                         },
+                        {
+                            text = "Duplicate",
+                            click = function()
+                                element.popup = nil
+                                MTGDefinition.Duplicate(defid)
+                            end,
+                        },
+                    }
+                    if THCWidgets.TableIconsAvailable() then
+                        entries[#entries + 1] = {
+                            text = "Put on the Table",
+                            click = function()
+                                element.popup = nil
+                                THCWidgets.PutOnTable(MTGConstants.tableIconKind, defid)
+                            end,
+                        }
+                    end
+                    entries[#entries + 1] = {
+                        text = "Delete",
+                        click = function()
+                            element.popup = nil
+                            MTGDefinition.Delete(defid)
+                        end,
+                    }
+                    element.popup = gui.ContextMenu{
+                        entries = entries,
                     }
                 end,
             },
