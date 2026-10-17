@@ -595,14 +595,11 @@ function MTGRun.SeedRound(run, round)
     end
 end
 
---- Put a Challenge authored mid-run onto the board, and keep it: presenting it
---- to the table is what earns it a place in the saved montage as well.
+--- Put a Challenge authored mid-run onto the board. It goes on the Run only,
+--- never the saved montage, so the journal still records it.
 --- @param ch MTGChallengeDef
 function MTGRun.AddChallengeAtRuntime(ch)
-    local defid = nil
-
     MTGRun.Mutate("Add challenge", function(run)
-        defid = run.sourceId
         if run:try_get("challenges") == nil then
             run.challenges = {}
         end
@@ -617,11 +614,81 @@ function MTGRun.AddChallengeAtRuntime(ch)
             run.instances[#run.instances + 1] = NewInstance(ch.id, round)
         end
     end)
+end
 
-    --A copy: one table must not span two documents.
-    if defid ~= nil then
-        MTGDefinition.AppendChallenge(defid, DeepCopy(ch))
+--- Whether a player may suggest a Challenge now: the book rules, in play, and
+--- not paused.
+--- @param run MTGRun|nil
+--- @return boolean
+function MTGRun.CanSuggest(run)
+    return run ~= nil
+        and run.moduleId == MTGConstants.moduleBaseline
+        and run.status == MTGConstants.statusRunning
+        and run.paused ~= true
+end
+
+--- What a player's suggestion is called to start with: the first hero in the
+--- roster they control, else their own name.
+--- @param run MTGRun
+--- @return string
+function MTGRun.SuggestionName(run)
+    local who = nil
+    for _, p in ipairs(MTGRun.ActiveParticipants(run)) do
+        if p.isHero and MTGRun.CanManage(p.charid) then
+            who = p.name
+            break
+        end
     end
+    if who == nil or who == "" then
+        who = dmhub.GetDisplayName(dmhub.userid) or "Player"
+    end
+    return string.format("Suggestion: %s", who)
+end
+
+--- Put a player's suggested Challenge on the board for everyone. It goes on
+--- the Run only, never the saved montage, so the journal still records it.
+--- First in the list, which is what makes the newest suggestion lead.
+--- @param ch MTGChallengeDef
+function MTGRun.SuggestChallenge(ch)
+    if not MTGRun.CanSuggest(MTGRun.Active()) then
+        return
+    end
+
+    MTGRun.Mutate("Suggest challenge", function(run)
+        if not MTGRun.CanSuggest(run) then
+            return
+        end
+
+        local round = run.round or 1
+        ch.availableFromRound = round
+        ch.repeatable = 0
+        ch.suggested = true
+        ch:FieldsFor(MTGConstants.moduleBaseline).difficulty = "medium"
+
+        if run:try_get("challenges") == nil then
+            run.challenges = {}
+        end
+        table.insert(run.challenges, 1, ch)
+
+        if run:try_get("instances") == nil then
+            run.instances = {}
+        end
+        run.instances[#run.instances + 1] = NewInstance(ch.id, round)
+    end)
+end
+
+--- Whether every hero standing on a row has a characteristic to roll. A
+--- Challenge with none allowed derives nothing, so someone has to pick one.
+--- @param inst table
+--- @return boolean
+function MTGRun.HasCharacteristics(inst)
+    for _, slot in ipairs({ "lead", "assist" }) do
+        local placed = inst[slot]
+        if placed ~= nil and (placed.attrId or "") == "" then
+            return false
+        end
+    end
+    return true
 end
 
 --- @param run MTGRun

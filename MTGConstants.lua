@@ -85,4 +85,4 @@ MTGConstants.iconFailure = "phosphor/x-circle.png"
 MTGConstants.iconConfigured = "phosphor/check-circle.png"  -- same asset as iconSuccess, different meaning
 MTGConstants.iconThreat = "phosphor/seal-warning-light.png"
 MTGConstants.iconOpportunity = "phosphor/gift-light.png"
-MTGConstants.iconPresent = "icons/icon_app/icon_app_34.png"
+MTGConstants.iconPresent = "phosphor/check-square-light.png"

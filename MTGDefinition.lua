@@ -23,6 +23,9 @@ MTGChallengeDef.availableFromRound = 1
 --- this existed read as visible without a migration touching the library.
 MTGChallengeDef.hidden = false
 
+--- A player suggested it mid-run. It lives on the Run only, and leads its round.
+MTGChallengeDef.suggested = false
+
 --- Keeps the difficulty off the players' card and out of the roll they are
 --- asked for. Draw Steel only: T&O has no difficulty to hide.
 MTGChallengeDef.difficultyHidden = false
@@ -422,24 +425,6 @@ function MTGDefinition.AddChallenge(defid)
         def.challenges[#def.challenges + 1] = ch
     end)
     return ch.id
-end
-
---- Put an already-built Challenge onto a Definition. AddChallenge makes a
---- blank one; this takes a Challenge that was authored somewhere else, which
---- is how a run-time addition earns its place in the saved montage.
---- @param defid string
---- @param ch MTGChallengeDef
-function MTGDefinition.AppendChallenge(defid, ch)
-    MTGDefinition.Mutate("Add challenge", function(defs)
-        local def = defs[defid]
-        if def == nil then
-            return
-        end
-        if def:try_get("challenges") == nil then
-            def.challenges = {}
-        end
-        def.challenges[#def.challenges + 1] = ch
-    end)
 end
 
 --- @param defid string

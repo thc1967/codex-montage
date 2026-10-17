@@ -391,13 +391,13 @@ local function SlotColumn(bound, slot, label)
                 end
                 local attrId = placed.attrId or ""
                 attrRow:FireEvent("setPicker", attrOptions, attrId, editable,
-                    attrId ~= "" and not allowedAttrs[attrId])
+                    attrId ~= "" and next(allowedAttrs) ~= nil and not allowedAttrs[attrId])
 
                 local allowedSkills = THCUtils.ToSet(ch:try_get("allowedSkills", {}))
                 local skillOptions = THCUtils.SkillOptionsFor(placed.charid, true)
                 local skillId = placed.skillId or ""
                 skillRow:FireEvent("setPicker", skillOptions, skillId, editable,
-                    skillId ~= "" and not allowedSkills[skillId])
+                    skillId ~= "" and next(allowedSkills) ~= nil and not allowedSkills[skillId])
             end
 
             if roll ~= nil then
@@ -755,15 +755,20 @@ local function BadgeBar(bound, director)
                 rollButton:SetClass("collapsed", not (waiting and not resolving))
                 if waiting and not resolving then
                     --One roll at a time: the summary dialog is a single shared panel.
-                    local ready = inst.lead ~= nil
+                    local placed = inst.lead ~= nil
+                    local picked = MTGRun.HasCharacteristics(inst)
+                    local ready = placed and picked
                     local busy = MTGRun.ResolvingInstance(run)
                     local blocked = busy ~= nil and busy.id ~= inst.id
                     rollButton:SetClass("disabled", not (ready and not blocked))
-                    local tip = cond(blocked,
-                        "Another row's roll is out",
-                        cond(ready,
-                            "Request rolls",
-                            "Put a Hero in the Lead slot first"))
+                    local tip = "Request rolls"
+                    if blocked then
+                        tip = "Another row's roll is out"
+                    elseif not placed then
+                        tip = "Put a Hero in the Lead slot first"
+                    elseif not picked then
+                        tip = "Pick a characteristic first"
+                    end
                     if shown.rollTip ~= tip then
                         shown.rollTip = tip
                         rollButton.tooltip = THCWidgets.Tooltip(tip)
@@ -906,7 +911,7 @@ local function MetaEntries(run, inst, ch, director)
         kind = "line",
         label = "Skills",
         value = THCUtils.NameList(ch:try_get("allowedSkills", {}),
-            THCUtils.SkillName, "none"),
+            THCUtils.SkillName, "any"),
     }
 
     return column, band

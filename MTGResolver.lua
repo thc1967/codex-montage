@@ -119,6 +119,11 @@ function MTGResolver.Trigger(instanceId)
         return
     end
 
+    --A roll with no characteristic has nothing to add; hold it until one is picked.
+    if not MTGRun.HasCharacteristics(inst) then
+        return
+    end
+
     --One at a time: a second would displace the shared summary dialog and lose that roll.
     local busy = MTGRun.ResolvingInstance(run)
     if busy ~= nil and busy.id ~= instanceId then

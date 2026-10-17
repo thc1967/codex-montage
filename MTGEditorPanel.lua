@@ -445,14 +445,28 @@ end
 --- itself from that binding. Everything it writes goes through the store, so
 --- the caller decides whether that lands in a saved montage or a private
 --- draft.
---- @param opts nil|{showRequired: boolean}
+--- A player's suggestion (`suggestion`) shows only Name and Description, wants
+--- both, and starts with the caret in Description. `onEdit(key, text)` hears
+--- each keystroke in those two, before the field commits.
+--- @param opts nil|{showRequired: boolean, suggestion: boolean, onEdit: nil|fun(key: string, text: string)}
 --- @return Panel
 function MTGEditorPanel.ChallengeForm(opts)
     opts = opts or {}
+    local suggestion = opts.suggestion == true
 
     local required = nil
     if opts.showRequired == true then
         required = "Required."
+    end
+
+    --- @param key string
+    --- @return fun(element: Panel)
+    local function Typed(key)
+        return function(element)
+            if opts.onEdit ~= nil then
+                opts.onEdit(key, element.text or "")
+            end
+        end
     end
 
     --- @type MTGFormBinding
@@ -494,71 +508,61 @@ function MTGEditorPanel.ChallengeForm(opts)
         }
     end
 
-    local moduleFieldsSlot = MTGWidgets.Slot{ width = "100%" }
+    --A suggestion's rows are built only when shown: an unparented panel leaks.
+    local topRow = {
+        FormRow("Name", "42%", gui.Input{
+            classes = { "formStacked", "sizeS" },
+            text = "",
+            characterLimit = 80,
+            refreshForm = function(element)
+                local name = bound.ch.name or ""
+                if element.text ~= name then
+                    element.text = name
+                end
+            end,
+            edit = Typed("name"),
+            change = function(element)
+                local newName = string.trim(element.text or "")
+                if newName == "" then
+                    element.text = bound.ch.name or ""
+                    return
+                end
+                bound.store.SetField("name", newName)
+            end,
+        }, required),
+    }
 
-    return gui.Panel{
-        width = "100%",
-        height = "auto",
-        flow = "vertical",
-        valign = "top",
+    if not suggestion then
+        topRow[#topRow + 1] = FormRow("From Round", "16%", Stepper{
+            min = 1,
+            max = MTGConstants.roundMax,
+            read = function()
+                return bound.ch.availableFromRound or 1
+            end,
+            commit = function(n)
+                bound.store.SetField("availableFromRound", n)
+            end,
+        }, required)
 
-        setChallenge = function(element, ch, store, moduleId)
-            bound.ch = ch
-            bound.store = store
-            bound.moduleId = moduleId
-            MTGWidgets.SetSlot(moduleFieldsSlot, moduleId, function()
-                return ModuleFieldsRow(moduleId)
-            end)
-            element:FireEventTree("refreshForm")
-        end,
+        topRow[#topRow + 1] = FormRow("Repeats", "16%", Stepper{
+            min = 0,
+            max = MTGConstants.repeatMax,
+            read = function()
+                return bound.ch:RepeatLimit()
+            end,
+            commit = function(n)
+                bound.store.SetField("repeatable", n)
+            end,
+        })
+    end
 
+    local rows = {
         gui.Panel{
             width = "100%",
             height = "auto",
             flow = "horizontal",
             valign = "top",
-
-            FormRow("Name", "42%", gui.Input{
-                classes = { "formStacked", "sizeS" },
-                text = "",
-                characterLimit = 80,
-                refreshForm = function(element)
-                    local name = bound.ch.name or ""
-                    if element.text ~= name then
-                        element.text = name
-                    end
-                end,
-                change = function(element)
-                    local newName = string.trim(element.text or "")
-                    if newName == "" then
-                        element.text = bound.ch.name or ""
-                        return
-                    end
-                    bound.store.SetField("name", newName)
-                end,
-            }, required),
-
-            FormRow("From Round", "16%", Stepper{
-                min = 1,
-                max = MTGConstants.roundMax,
-                read = function()
-                    return bound.ch.availableFromRound or 1
-                end,
-                commit = function(n)
-                    bound.store.SetField("availableFromRound", n)
-                end,
-            }, required),
-
-            FormRow("Repeats", "16%", Stepper{
-                min = 0,
-                max = MTGConstants.repeatMax,
-                read = function()
-                    return bound.ch:RepeatLimit()
-                end,
-                commit = function(n)
-                    bound.store.SetField("repeatable", n)
-                end,
-            }),
+            children = topRow,
         },
 
         gui.Panel{
@@ -571,19 +575,30 @@ function MTGEditorPanel.ChallengeForm(opts)
                 classes = { "formStacked", "sizeS" },
                 text = "",
                 characterLimit = 300,
+                create = function(element)
+                    if suggestion then
+                        element.hasInputFocus = true
+                    end
+                end,
                 refreshForm = function(element)
                     local description = bound.ch.description or ""
                     if element.text ~= description then
                         element.text = description
                     end
                 end,
+                edit = Typed("description"),
                 change = function(element)
                     bound.store.SetField("description", element.text or "")
                 end,
-            }),
+            }, cond(suggestion, required)),
         },
+    }
 
-        gui.Panel{
+    local moduleFieldsSlot = nil
+    if not suggestion then
+        moduleFieldsSlot = MTGWidgets.Slot{ width = "100%" }
+
+        rows[#rows + 1] = gui.Panel{
             width = "100%",
             height = "auto",
             flow = "horizontal",
@@ -591,9 +606,30 @@ function MTGEditorPanel.ChallengeForm(opts)
 
             CharacteristicsPicker(bound, required),
             SkillsPicker(bound),
-        },
+        }
 
-        moduleFieldsSlot,
+        rows[#rows + 1] = moduleFieldsSlot
+    end
+
+    return gui.Panel{
+        width = "100%",
+        height = "auto",
+        flow = "vertical",
+        valign = "top",
+
+        setChallenge = function(element, ch, store, moduleId)
+            bound.ch = ch
+            bound.store = store
+            bound.moduleId = moduleId
+            if moduleFieldsSlot ~= nil then
+                MTGWidgets.SetSlot(moduleFieldsSlot, moduleId, function()
+                    return ModuleFieldsRow(moduleId)
+                end)
+            end
+            element:FireEventTree("refreshForm")
+        end,
+
+        children = rows,
     }
 end
 
@@ -630,26 +666,65 @@ end
 --- A Challenge authored while the montage is running. It reaches the document
 --- only on Present, so discarding costs nothing and the table never sees a
 --- half-built row.
+--- A player's suggestion (`opts.suggestion`) asks only for a name and a
+--- description, and saves only while both have text and `opts.canSave()`
+--- holds. Fire `refreshReady` on the card when what canSave reads changes.
 --- @param draft MTGChallengeDef
 --- @param moduleId string
 --- @param onPresent fun(draft: MTGChallengeDef)
 --- @param onDiscard fun()
+--- @param opts nil|{suggestion: boolean, canSave: nil|fun(): boolean}
 --- @return Panel
-function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
+function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard, opts)
+    opts = opts or {}
+    local suggestion = opts.suggestion == true
+
+    --What the two fields hold this keystroke; the draft only hears a commit.
+    local typed = {
+        name = draft.name or "",
+        description = draft.description or "",
+    }
+
+    local function Ready()
+        if not suggestion then
+            return DraftReady(draft, moduleId)
+        end
+        return string.trim(typed.name) ~= ""
+            and string.trim(typed.description) ~= ""
+            and (opts.canSave == nil or opts.canSave())
+    end
+
+    local function PresentTip()
+        if not suggestion then
+            return "Present this challenge to the table"
+        end
+        if opts.canSave ~= nil and not opts.canSave() then
+            return "The montage is paused"
+        end
+        return "Suggest this challenge to the table"
+    end
+
     local presentButton
 
+    --Sized and placed as the Discard beside it.
     presentButton = gui.Button{
-        classes = { "sizeXs", cond(not DraftReady(draft, moduleId), "disabled") },
+        --Green only while it can save: the tint would out-rank the theme's disabled grey.
+        classes = { "sizeXs", cond(Ready(), "thc-tint-success", "disabled") },
         icon = MTGConstants.iconPresent,
-        width = 22,
-        height = 22,
         halign = "right",
-        valign = "center",
+        valign = "top",
         hmargin = 2,
-        hover = THCWidgets.Tooltip("Present this challenge to the table"),
+        --Read on each hover, so a pause shows up in it.
+        hover = function(element)
+            THCWidgets.ShowTip(element, PresentTip())
+        end,
         click = function(element)
-            if element:HasClass("disabled") then
+            if element:HasClass("disabled") or not Ready() then
                 return
+            end
+            if suggestion then
+                draft.name = string.trim(typed.name)
+                draft.description = typed.description
             end
             onPresent(draft)
         end,
@@ -658,13 +733,26 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
     --Rebuilding the form would take the caret out of the field being typed.
     local function SyncPresent()
         if presentButton ~= nil and presentButton.valid then
-            presentButton:SetClass("disabled", not DraftReady(draft, moduleId))
+            local ready = Ready()
+            presentButton:SetClass("disabled", not ready)
+            presentButton:SetClass("thc-tint-success", ready)
         end
     end
 
     --The draft is this card's own; no document write changes it.
-    local form = MTGEditorPanel.ChallengeForm{ showRequired = true }
-    form:FireEvent("setChallenge", draft, DraftStore(draft, moduleId, SyncPresent), moduleId)
+    local form = MTGEditorPanel.ChallengeForm{
+        showRequired = true,
+        suggestion = suggestion,
+        onEdit = function(key, text)
+            typed[key] = text
+            SyncPresent()
+        end,
+    }
+    form:FireEvent("setChallenge", draft, DraftStore(draft, moduleId, function()
+        typed.name = draft.name or ""
+        typed.description = draft.description or ""
+        SyncPresent()
+    end), moduleId)
 
     return gui.Panel{
         classes = { "bordered" },
@@ -674,6 +762,10 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
         valign = "top",
         pad = 8,
         vmargin = 4,
+
+        refreshReady = function()
+            SyncPresent()
+        end,
 
         gui.Panel{
             width = "100%",
@@ -687,7 +779,7 @@ function MTGEditorPanel.DraftCard(draft, moduleId, onPresent, onDiscard)
                 height = "auto",
                 halign = "left",
                 valign = "center",
-                text = "New Challenge",
+                text = cond(suggestion, "Suggest a Challenge", "New Challenge"),
             },
 
             gui.Panel{

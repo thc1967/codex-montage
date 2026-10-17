@@ -485,30 +485,36 @@ function MTGRunPanel.Create(opts)
             },
         }
 
-        local addButton = nil
-        if director then
-            addButton = gui.Button{
-                classes = { "addButton", "sizeXs" },
-                halign = "right",
-                valign = "center",
-                --Clear of the board's scrollbar.
-                rmargin = 20,
-                hover = THCWidgets.Tooltip("Add a challenge"),
-                click = function()
-                    if m_draft ~= nil then
+        --The Director adds a challenge; a player suggests one.
+        local addButton = gui.Button{
+            classes = { "addButton", "sizeXs" },
+            halign = "right",
+            valign = "center",
+            --Clear of the board's scrollbar.
+            rmargin = 20,
+            hover = THCWidgets.Tooltip(cond(director, "Add a challenge", "Suggest a challenge")),
+            click = function()
+                if m_draft ~= nil then
+                    return
+                end
+                local name = ""
+                if not director then
+                    local run = MTGRun.Active()
+                    if not MTGRun.CanSuggest(run) then
                         return
                     end
-                    m_draft = MTGChallengeDef.CreateNew{
-                        name = "",
-                        description = "",
-                        availableFromRound = round,
-                        repeatable = 0,
-                    }
-                    resultPanel:FireEvent("rebuild")
-                end,
-            }
-            headerChildren[#headerChildren + 1] = addButton
-        end
+                    name = MTGRun.SuggestionName(run --[[@as MTGRun]])
+                end
+                m_draft = MTGChallengeDef.CreateNew{
+                    name = name,
+                    description = "",
+                    availableFromRound = round,
+                    repeatable = 0,
+                }
+                resultPanel:FireEvent("rebuild")
+            end,
+        }
+        headerChildren[#headerChildren + 1] = addButton
 
         return gui.Panel{
             width = "100%",
@@ -532,12 +538,29 @@ function MTGRunPanel.Create(opts)
                 arrow:SetClass("expanded", expanded)
                 body:SetClass("collapsed", not expanded)
 
-                if addButton ~= nil then
-                    addButton:SetClass("collapsed", not entry.isCurrent)
-                end
+                --A player suggests only while the book montage is running and not paused.
+                addButton:SetClass("collapsed",
+                    not entry.isCurrent or (not director and not MTGRun.CanSuggest(run)))
 
                 local draft = entry.isCurrent and m_draft or nil
-                MTGWidgets.SetSlot(draftSlot, cond(draft ~= nil, "draft", ""), function()
+                local card = MTGWidgets.SetSlot(draftSlot, cond(draft ~= nil, "draft", ""), function()
+                    if not director then
+                        return MTGEditorPanel.DraftCard(draft, run.moduleId,
+                            function(d)
+                                m_draft = nil
+                                MTGRun.SuggestChallenge(d)
+                            end,
+                            function()
+                                m_draft = nil
+                                resultPanel:FireEvent("rebuild")
+                            end,
+                            {
+                                suggestion = true,
+                                canSave = function()
+                                    return MTGRun.CanSuggest(MTGRun.Active())
+                                end,
+                            })
+                    end
                     return MTGEditorPanel.DraftCard(draft, run.moduleId,
                         function(d)
                             m_draft = nil
@@ -548,6 +571,11 @@ function MTGRunPanel.Create(opts)
                             resultPanel:FireEvent("rebuild")
                         end)
                 end)
+
+                --A pause mid-suggestion keeps the text and holds Save.
+                if card ~= nil and card.valid then
+                    card:FireEvent("refreshReady")
+                end
 
                 THCWidgets.BindList(cards, entry.items, function()
                     return MTGChallengeCard.Create(director, m_cardExpanded)
@@ -663,6 +691,14 @@ function MTGRunPanel.Create(opts)
                 end
             end
 
+            --Where each suggested challenge sits in the Run's list.
+            local suggestedAt = {}
+            for i, ch in ipairs(run:try_get("challenges", {})) do
+                if ch:try_get("suggested", false) == true then
+                    suggestedAt[ch.id] = i
+                end
+            end
+
             local sections = {}
 
             for round = 1, run.round or 1 do
@@ -684,18 +720,29 @@ function MTGRunPanel.Create(opts)
                     end
                 end
 
-                local floated = {}
+                --Suggestions lead for everyone, newest first: each went in at the
+                --front of the Run's list. Then whatever this client saw arrive.
+                local suggested = {}
+                local pinned = {}
+                local rest = {}
                 for _, inst in ipairs(ordered) do
-                    if m_pinned[inst.challengeId] then
-                        floated[#floated + 1] = inst
+                    if suggestedAt[inst.challengeId] ~= nil then
+                        suggested[#suggested + 1] = inst
+                    elseif m_pinned[inst.challengeId] then
+                        pinned[#pinned + 1] = inst
+                    else
+                        rest[#rest + 1] = inst
                     end
                 end
-                for _, inst in ipairs(ordered) do
-                    if not m_pinned[inst.challengeId] then
-                        floated[#floated + 1] = inst
+                table.sort(suggested, function(a, b)
+                    return suggestedAt[a.challengeId] < suggestedAt[b.challengeId]
+                end)
+                ordered = {}
+                for _, group in ipairs({ suggested, pinned, rest }) do
+                    for _, inst in ipairs(group) do
+                        ordered[#ordered + 1] = inst
                     end
                 end
-                ordered = floated
 
                 --A hidden Challenge is absent from the players' board, not greyed.
                 local items = {}

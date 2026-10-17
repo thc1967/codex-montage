@@ -264,6 +264,8 @@ function MTGDialog.Create()
         height = MTGConstants.windowHeight,
         footerCells = { 100 },
         close = "host",
+        --The house resting tints, for the draft card's green Save.
+        styles = THCWidgets.tintStyles,
 
         monitor = MTGRun.DocPath(),
         refresh = function(shell)
@@ -357,6 +359,8 @@ function MTGDialog.CreatePlayerView()
         height = MTGConstants.playerWindowHeight,
         footerCells = false,
         close = "host",
+        --The house resting tints, for the suggestion card's green Save.
+        styles = THCWidgets.tintStyles,
 
         monitor = MTGRun.DocPath(),
         refresh = function(shell)
