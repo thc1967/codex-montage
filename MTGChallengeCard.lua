@@ -13,90 +13,6 @@ MTGChallengeCard = {}
 --- @field foldedTokens Panel|nil
 --- @field openTokens Panel|nil
 
---- Flags a pick the Challenge does not allow. Off-list is legal, so this
---- informs rather than blocks.
---- @param tooltip string
---- @return Panel
-local function OffListIcon(tooltip)
-    return gui.Panel{
-        classes = { "bgWarning" },
-        width = 20,
-        height = 20,
-        halign = "left",
-        valign = "center",
-        lmargin = 2,
-        bgimage = "phosphor/warning-duotone.png",
-        hover = THCWidgets.Tooltip(tooltip),
-    }
-end
-
---- One labelled dropdown plus its off-list flag, built once. `setPicker`
---- hands it its options, pick, editability and whether the pick is off the
---- Challenge's list.
---- @param offListTip string
---- @param onChange fun(id: string)
---- @return Panel
-local function PickerRow(offListTip, onChange)
-    local dropdown = gui.Dropdown{
-        width = "98%",
-        halign = "left",
-        valign = "center",
-        options = {},
-        idChosen = "",
-        interactable = false,
-        change = function(element)
-            onChange(element.idChosen)
-        end,
-    }
-
-    local icon = OffListIcon(offListTip)
-    icon:SetClass("collapsed", true)
-
-    return gui.Panel{
-        width = "100%",
-        height = "auto",
-        flow = "horizontal",
-        valign = "top",
-        vmargin = 1,
-
-        --- @param options {id: string, text: string}[]
-        --- @param value string
-        --- @param editable boolean
-        --- @param offList boolean
-        setPicker = function(element, options, value, editable, offList)
-            if not dmhub.DeepEqual(dropdown.options, options) then
-                dropdown.options = options
-            end
-            if dropdown.idChosen ~= value then
-                dropdown.idChosen = value
-            end
-            if dropdown.interactable ~= editable then
-                dropdown.interactable = editable
-            end
-            dropdown.selfStyle.width = cond(offList, "98%-24", "98%")
-            icon:SetClass("collapsed", not offList)
-        end,
-
-        dropdown,
-        icon,
-    }
-end
-
---- "2 edges", "1 bane", or nil when the roll was clean.
---- @param roll table
---- @return string|nil
-local function EdgeText(roll)
-    local boons = roll.boons or 0
-    local banes = roll.banes or 0
-    if boons > 0 then
-        return string.format("%d edge%s", boons, cond(boons == 1, "", "s"))
-    end
-    if banes > 0 then
-        return string.format("%d bane%s", banes, cond(banes == 1, "", "s"))
-    end
-    return nil
-end
-
 --- What the roll was made of, once it has been made: the verdict line and
 --- the parts line that replace the pickers, since the choices are spent and
 --- what matters is what they produced.
@@ -122,7 +38,7 @@ local function RollSummaryText(run, inst, ch, slot, assignment, roll)
     else
         parts[#parts + 1] = "no skill"
     end
-    local edges = EdgeText(roll)
+    local edges = THCRoll.EdgeText(roll)
     if edges ~= nil then
         parts[#parts + 1] = edges
     end
@@ -254,10 +170,10 @@ local function SlotColumn(bound, slot, label)
         token,
     }
 
-    local attrRow = PickerRow("Not one of this challenge's characteristics", function(id)
+    local attrRow = THCWidgets.PickerRow("Not one of this challenge's characteristics", function(id)
         MTGRun.SetAssignmentCharacteristic(bound.inst.id, slot, id)
     end)
-    local skillRow = PickerRow("Not one of this challenge's skills", function(id)
+    local skillRow = THCWidgets.PickerRow("Not one of this challenge's skills", function(id)
         MTGRun.SetAssignmentSkill(bound.inst.id, slot, id)
     end)
 

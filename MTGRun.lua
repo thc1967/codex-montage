@@ -851,16 +851,7 @@ end
 --- @param charid string
 --- @return string
 function MTGRun.DeriveCharacteristic(ch, charid)
-    local best = ""
-    local bestModifier = nil
-    for _, attrId in ipairs(ch:try_get("allowedCharacteristics", {})) do
-        local modifier = THCUtils.CharacteristicModifier(charid, attrId)
-        if modifier ~= nil and (bestModifier == nil or modifier > bestModifier) then
-            best = attrId
-            bestModifier = modifier
-        end
-    end
-    return best
+    return THCUtils.DeriveCharacteristic(ch:try_get("allowedCharacteristics", {}), charid)
 end
 
 --- Retune one of the rules module's Challenge fields mid-Run.

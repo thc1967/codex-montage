@@ -72,13 +72,7 @@ MTGRules.Register{
     --- @param assistTier number
     --- @return string a modtype id
     AssistGrant = function(assistTier)
-        if assistTier >= 3 then
-            return "double_edge"
-        end
-        if assistTier >= 2 then
-            return "edge"
-        end
-        return "bane"
+        return THCRoll.AssistGrant(assistTier)
     end,
 
     --- Outcome ids, so progress and history never parse prose.
