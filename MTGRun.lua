@@ -267,16 +267,15 @@ function MTGRun.Flow(run, inst)
             return nil
         end,
 
-        --A hero who has rolled on another open row, or whose roll is out
-        --there, stays put.
+        --A hero who has rolled on another open row, or who stands on a row
+        --with a roll out, stays put: that row cannot let them go.
         mayPlace = function(charid)
             local r = MTGRun.Active()
             for _, row in ipairs(r ~= nil and r:try_get("instances", {}) or {}) do
                 if row.id ~= instanceId and row.adjudicatedInRound == nil then
                     local record = MTGRun.Record(row)
                     for slot, seat in pairs(record.slots) do
-                        if seat.charid == charid and (record.rolls[slot] ~= nil
-                            or (record.pending ~= nil and record.pending.charid == charid)) then
+                        if seat.charid == charid and (record.rolls[slot] ~= nil or record.pending ~= nil) then
                             return false
                         end
                     end
