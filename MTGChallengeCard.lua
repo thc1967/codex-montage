@@ -13,181 +13,13 @@ MTGChallengeCard = {}
 --- @field foldedTokens Panel|nil
 --- @field openTokens Panel|nil
 
---- What the roll was made of, once it has been made: the verdict line and
---- the parts line that replace the pickers, since the choices are spent and
---- what matters is what they produced.
---- @param run MTGRun
---- @param inst table
---- @param ch MTGChallengeDef
---- @param slot string
---- @param assignment table
---- @param roll table
---- @return string verdict
---- @return string parts
-local function RollSummaryText(run, inst, ch, slot, assignment, roll)
-    local parts = {
-        string.format("Tier %d", roll.tier or 0),
-        tostring(roll.total or 0),
-        string.format("Natural %d", roll.naturalRoll or 0),
-        string.format("%s %s",
-            THCUtils.CharacteristicName(assignment.attrId),
-            THCUtils.SignedModifier(THCUtils.CharacteristicModifier(assignment.charid, assignment.attrId))),
-    }
-    if assignment.skillId ~= nil and assignment.skillId ~= "" then
-        parts[#parts + 1] = THCUtils.SkillName(assignment.skillId)
-    else
-        parts[#parts + 1] = "no skill"
-    end
-    local edges = THCRoll.EdgeText(roll)
-    if edges ~= nil then
-        parts[#parts + 1] = edges
-    end
-
-    local verdict
-    if slot == "assist" then
-        local grant = MTGResolver.AssistGrant(run, inst)
-        verdict = string.format("Grants %s", string.gsub(grant or "bane", "_", " "))
-    elseif inst.outcome ~= nil then
-        verdict = inst.outcome.label
-    else
-        verdict = MTGRules.GetOrDefault(run.moduleId).RollToOutcome(run, ch, roll).label
-    end
-
-    return string.format("**%s**", verdict), table.concat(parts, " | ")
-end
-
---- A muted line of the roll summary.
---- @return Panel
-local function SummaryLine()
-    return gui.Label{
-        classes = { "sizeXs", "fgMuted", "collapsed" },
-        width = "100%",
-        height = "auto",
-        halign = "left",
-        valign = "top",
-        markdown = true,
-        text = "",
-    }
-end
-
---- The Lead or Assist column: the box, with its characteristic and skill
---- stacked beside it, or the roll's summary once it has rolled, and the
---- module's prompt under the Lead. Every part is built once. `setColumn`
---- reads the bound row, and the handlers read it again when they fire, so a
---- column handed a new row never acts on the last one.
+--- The module's question about the Lead's roll, under the Lead's seat: the
+--- question and its answers. Whoever rolled may answer, and the Director.
+--- Built once; `setPrompt` binds it to the row.
 --- @param bound MTGRowBinding
---- @param slot string
---- @param label string
 --- @return Panel
-local function SlotColumn(bound, slot, label)
+local function PromptRow(bound)
     local shown = {}
-
-    --Whether this slot can change right now, read by the handlers.
-    local m_inert = true
-
-    --- Offer to remove whoever stands here, to someone who manages that hero,
-    --- while the slot can still change. The menu acts on the row it opened on.
-    --- @param element Panel
-    local function OfferRemove(element)
-        local inst = bound.inst
-        local placed = inst ~= nil and inst[slot] or nil
-        if placed == nil or m_inert or not MTGRun.CanManage(placed.charid) then
-            return
-        end
-
-        local instId = inst.id
-        element.popup = gui.ContextMenu{
-            entries = {
-                {
-                    text = "Remove",
-                    click = function()
-                        element.popup = nil
-                        MTGRun.Unstage(instId, slot)
-                    end,
-                },
-            },
-        }
-    end
-
-    local token = MTGWidgets.ParticipantToken()
-
-    --Empty and waiting, or holding a participant.
-    local box = gui.Panel{
-        classes = { "bordered", "mtgSlot", "disabled" },
-        width = 46,
-        height = 46,
-        flow = "none",
-        halign = "center",
-        valign = "top",
-        dragTarget = false,
-        hover = THCWidgets.Tooltip(label),
-
-        dropOnSlot = function(element, charid)
-            if bound.inst ~= nil and not m_inert then
-                MTGRun.Stage(bound.inst.id, slot, charid)
-            end
-        end,
-
-        rightClick = OfferRemove,
-
-        --An empty slot offers everyone who could stand in it. The menu acts on
-        --the row it opened on.
-        press = function(element)
-            local inst = bound.inst
-            if inst == nil or m_inert or inst[slot] ~= nil then
-                return
-            end
-
-            --Read live: CanStage looks at rows this card's own data does not.
-            local current = MTGRun.Active() or bound.run
-            local instId = inst.id
-            local entries = {}
-            for _, p in ipairs(MTGRun.StageOptions(current, inst, slot)) do
-                local charid = p.charid
-                if MTGRun.CanManage(charid) then
-                    entries[#entries + 1] = {
-                        text = p.name or "",
-                        click = function()
-                            element.popup = nil
-                            MTGRun.Stage(instId, slot, charid)
-                        end,
-                    }
-                end
-            end
-
-            if #entries == 0 then
-                entries[#entries + 1] = {
-                    text = "No one available",
-                    click = function()
-                        element.popup = nil
-                    end,
-                }
-            end
-
-            element.popup = gui.ContextMenu{ entries = entries }
-        end,
-
-        token,
-    }
-
-    local attrRow = THCWidgets.PickerRow("Not one of this challenge's characteristics", function(id)
-        MTGRun.SetAssignmentCharacteristic(bound.inst.id, slot, id)
-    end)
-    local skillRow = THCWidgets.PickerRow("Not one of this challenge's skills", function(id)
-        MTGRun.SetAssignmentSkill(bound.inst.id, slot, id)
-    end)
-
-    local rollingLabel = gui.Label{
-        classes = { "sizeXs", "noBold", "fgMuted", "collapsed" },
-        width = "100%",
-        height = "auto",
-        halign = "left",
-        valign = "top",
-        text = "Rolling...",
-    }
-
-    local verdictLine = SummaryLine()
-    local partsLine = SummaryLine()
 
     local promptText = gui.Label{
         classes = { "sizeXs", "noBold", "fgMuted" },
@@ -222,9 +54,12 @@ local function SlotColumn(bound, slot, label)
                 end
             end,
 
+            --The answer carries the roll it was asked of, so a re-roll since
+            --makes it stale rather than deciding the row on the old roll.
             click = function()
-                if bound.inst ~= nil and m_outcome ~= nil then
-                    MTGRun.Adjudicate(bound.inst.id, m_outcome)
+                local inst = bound.inst
+                if inst ~= nil and m_outcome ~= nil then
+                    MTGResolver.Answer(inst.id, m_outcome, MTGResolver.Stamp(inst))
                 end
             end,
         }
@@ -238,151 +73,88 @@ local function SlotColumn(bound, slot, label)
         tmargin = 2,
     }
 
-    --The module's question, answerable by whoever rolled and by the Director.
-    local promptRow = gui.Panel{
+    return gui.Panel{
         classes = { "collapsed" },
         width = "100%",
         height = "auto",
         flow = "vertical",
         valign = "top",
 
+        setPrompt = function(element)
+            local run = bound.run
+            local inst = bound.inst
+            local prompt = (run ~= nil and inst ~= nil) and MTGResolver.PendingPrompt(run, inst) or nil
+            element:SetClass("collapsed", prompt == nil)
+            if prompt == nil then
+                return
+            end
+
+            local text = prompt.text or ""
+            if shown.text ~= text then
+                shown.text = text
+                promptText.text = text
+            end
+
+            local lead = MTGRun.Seat(inst, "lead")
+            local options = {}
+            if lead ~= nil and MTGRun.CanManage(lead.charid) then
+                options = prompt.options or {}
+            end
+            promptButtons:SetClass("collapsed", #options == 0)
+            THCWidgets.BindList(promptButtons, options, PromptButton, "setOption")
+        end,
+
         promptText,
         promptButtons,
     }
+end
 
-    return gui.Panel{
+--- The Lead or Assist seat: THCRollWidgets' seat, in the montage's drag group,
+--- offering whoever this row may take, greying a hero who is spent. The Lead
+--- seat carries the module's question under it.
+--- @param bound MTGRowBinding
+--- @param slot string
+--- @param label string
+--- @param director boolean
+--- @return Panel column
+--- @return Panel|nil prompt
+local function Seat(bound, slot, label, director)
+    local prompt = nil
+    if slot == "lead" then
+        prompt = PromptRow(bound)
+    end
+
+    local column = THCRollWidgets.SeatColumn{
+        group = "mtg",
+        slot = slot,
+        label = label,
+        director = director,
         width = "33%",
-        height = "auto",
-        flow = "horizontal",
-        valign = "top",
+        buttons = true,
+        extra = prompt,
 
-        setColumn = function(element)
-            local run = bound.run
-            local inst = bound.inst
-            local ch = bound.ch
-            local placed = inst[slot]
-
-            --A roll in flight freezes the slot: its inputs are out with the request.
-            local inert = inst.adjudicatedInRound ~= nil or inst[slot .. "Roll"] ~= nil
-                or inst.resolution ~= nil
-            --Dimmed means spent or already acted this round; both read the same.
-            local dimmed = placed ~= nil and (inert or MTGRun.HasActedThisRound(run, placed.charid))
-            local canManage = placed ~= nil and MTGRun.CanManage(placed.charid)
-
-            m_inert = inert
-            box:SetClass("disabled", inert)
-            if box.dragTarget ~= (not inert) then
-                box.dragTarget = not inert
+        --Read live: who a row may take turns on rows this card does not hold.
+        options = function()
+            local run = MTGRun.Active() or bound.run
+            if run == nil or bound.inst == nil then
+                return {}
             end
-
-            local p = placed ~= nil and MTGRun.Participant(run, placed.charid) or nil
-            token:FireEvent("setParticipant", p ~= nil and {
-                p = p,
-                draggable = not inert,
-                dimmed = dimmed,
-                onRightClick = OfferRemove,
-            } or nil)
-
-            local locked = inst.adjudicatedInRound ~= nil or inst.resolution ~= nil
-            local editable = placed ~= nil and not locked and canManage
-            local roll = placed ~= nil and inst[slot .. "Roll"] or nil
-            local picking = placed ~= nil and roll == nil
-
-            attrRow:SetClass("collapsed", not picking)
-            skillRow:SetClass("collapsed", not picking)
-            rollingLabel:SetClass("collapsed", not (picking
-                and inst.resolution ~= nil and inst.resolution.actionFor == placed.charid))
-            verdictLine:SetClass("collapsed", roll == nil)
-            partsLine:SetClass("collapsed", roll == nil)
-
-            if picking then
-                local allowedAttrs = THCUtils.ToSet(ch:try_get("allowedCharacteristics", {}))
-                local attrOptions = {}
-                for _, option in ipairs(THCUtils.CharacteristicOptions()) do
-                    local modifier = THCUtils.CharacteristicModifier(placed.charid, option.id)
-                    attrOptions[#attrOptions + 1] = {
-                        id = option.id,
-                        text = string.format("%s %s", option.text, THCUtils.SignedModifier(modifier)),
-                    }
-                end
-                local attrId = placed.attrId or ""
-                attrRow:FireEvent("setPicker", attrOptions, attrId, editable,
-                    attrId ~= "" and next(allowedAttrs) ~= nil and not allowedAttrs[attrId])
-
-                local allowedSkills = THCUtils.ToSet(ch:try_get("allowedSkills", {}))
-                local skillOptions = THCUtils.SkillOptionsFor(placed.charid, true)
-                local skillId = placed.skillId or ""
-                skillRow:FireEvent("setPicker", skillOptions, skillId, editable,
-                    skillId ~= "" and next(allowedSkills) ~= nil and not allowedSkills[skillId])
-            end
-
-            if roll ~= nil then
-                local verdict, parts = RollSummaryText(run, inst, ch, slot, placed, roll)
-                if shown.verdict ~= verdict then
-                    shown.verdict = verdict
-                    verdictLine.text = verdict
-                end
-                if shown.parts ~= parts then
-                    shown.parts = parts
-                    partsLine.text = parts
-                end
-            end
-
-            local prompt = nil
-            if roll ~= nil and slot == "lead" then
-                prompt = MTGResolver.PendingPrompt(run, inst)
-            end
-            promptRow:SetClass("collapsed", prompt == nil)
-            if prompt ~= nil then
-                local text = prompt.text or ""
-                if promptText.text ~= text then
-                    promptText.text = text
-                end
-                local options = {}
-                if MTGRun.CanManage(placed.charid) then
-                    options = prompt.options or {}
-                end
-                promptButtons:SetClass("collapsed", #options == 0)
-                THCWidgets.BindList(promptButtons, options, PromptButton, "setOption")
-            end
+            return MTGRun.StageOptions(run, bound.inst)
         end,
 
-        gui.Panel{
-            width = 46,
-            height = "auto",
-            flow = "vertical",
-            halign = "left",
-            valign = "top",
-            rmargin = 8,
-
-            box,
-
-            gui.Label{
-                classes = { "sizeXs", "noBold", "fgMuted" },
-                width = "100%",
-                height = "auto",
-                halign = "center",
-                valign = "top",
-                textAlignment = "center",
-                text = label,
-            },
-        },
-
-        gui.Panel{
-            width = "96%-54",
-            height = "auto",
-            flow = "vertical",
-            halign = "left",
-            valign = "center",
-
-            attrRow,
-            skillRow,
-            rollingLabel,
-            verdictLine,
-            partsLine,
-            promptRow,
-        },
+        --Dimmed means spent or already acted this round; both read the same.
+        dimmed = function(charid)
+            local inst = bound.inst
+            if inst == nil then
+                return false
+            end
+            local record = MTGRun.Record(inst)
+            return inst.adjudicatedInRound ~= nil or record.rolls[slot] ~= nil
+                or record.pending ~= nil or MTGRun.HasActedThisRound(bound.run, charid)
+        end,
     }
+
+    return column, prompt
 end
 
 --- The module's own fields, one label/value pair each.
@@ -451,9 +223,9 @@ end
 local function RollerEntries(run, inst, always)
     local result = {}
     for _, slot in ipairs({ "lead", "assist" }) do
-        local placed = inst[slot]
+        local placed = MTGRun.Seat(inst, slot)
         if placed ~= nil and (always
-            or inst[slot .. "Roll"] ~= nil or inst.granted == true) then
+            or MTGRun.RowRoll(inst, slot) ~= nil or inst.granted == true) then
             local p = MTGRun.Participant(run, placed.charid)
             result[#result + 1] = {
                 charid = placed.charid,
@@ -594,16 +366,13 @@ local function BadgeBar(bound, director)
     if dmhub.isDM then
         cancelButton = HeaderButton(MTGConstants.iconRoll,
             "Waiting on the roll. Press to take it back.", function()
-                local resolution = bound.inst.resolution
-                if resolution ~= nil then
-                    MTGResolver.Cancel(bound.inst.id, resolution.actionId)
-                end
+                MTGResolver.Cancel(bound.inst.id)
             end)
         rollButton = HeaderButton(MTGConstants.iconRoll, nil, function(element)
             if element:HasClass("disabled") then
                 return
             end
-            MTGResolver.Trigger(bound.inst.id)
+            MTGResolver.Roll(bound.inst.id)
         end)
         grantButton = HeaderButton(MTGConstants.iconGrant,
             "Grant this to the Lead, no roll", function()
@@ -665,26 +434,16 @@ local function BadgeBar(bound, director)
             bound.openTokens:SetClass("collapsed", not bound.open)
 
             if rollButton ~= nil then
-                local waiting = not adjudicated and inst.leadRoll == nil
-                local resolving = inst.resolution ~= nil
-                cancelButton:SetClass("collapsed", not (waiting and resolving))
-                rollButton:SetClass("collapsed", not (waiting and not resolving))
-                if waiting and not resolving then
-                    --One roll at a time: the summary dialog is a single shared panel.
-                    local placed = inst.lead ~= nil
-                    local picked = MTGRun.HasCharacteristics(inst)
-                    local ready = placed and picked
-                    local busy = MTGRun.ResolvingInstance(run)
-                    local blocked = busy ~= nil and busy.id ~= inst.id
-                    rollButton:SetClass("disabled", not (ready and not blocked))
-                    local tip = "Request rolls"
-                    if blocked then
-                        tip = "Another row's roll is out"
-                    elseif not placed then
-                        tip = "Put a Hero in the Lead slot first"
-                    elseif not picked then
-                        tip = "Pick a characteristic first"
-                    end
+                --The die starts a row; once anything has rolled, the next step
+                --sits on the seat beside its Re-roll.
+                local resolving = MTGRun.Pending(inst) ~= nil
+                local fresh = not adjudicated and next(MTGRun.Record(inst).rolls) == nil
+                cancelButton:SetClass("collapsed", not (not adjudicated and resolving))
+                rollButton:SetClass("collapsed", not (fresh and not resolving))
+                if fresh and not resolving then
+                    local blocker = MTGResolver.RollBlocker(run, inst)
+                    rollButton:SetClass("disabled", blocker ~= nil)
+                    local tip = blocker or "Request rolls"
                     if shown.rollTip ~= tip then
                         shown.rollTip = tip
                         rollButton.tooltip = THCWidgets.Tooltip(tip)
@@ -693,7 +452,7 @@ local function BadgeBar(bound, director)
 
                 local undoable = MTGRun.HasTestToUndo(run, inst)
                 grantButton:SetClass("collapsed", not (not adjudicated
-                    and inst.lead ~= nil and inst.resolution == nil and not undoable))
+                    and MTGRun.Seat(inst, "lead") ~= nil and not resolving and not undoable))
                 undoButton:SetClass("collapsed", not undoable)
             end
 
@@ -1125,8 +884,8 @@ function MTGChallengeCard.Create(director, expanded)
         return MetaRow(bound)
     end
 
-    local leadColumn = SlotColumn(bound, "lead", "Lead")
-    local assistColumn = SlotColumn(bound, "assist", "Assist")
+    local leadColumn, leadPrompt = Seat(bound, "lead", "Lead", director)
+    local assistColumn = Seat(bound, "assist", "Assist", director)
 
     local body = gui.Panel{
         width = "100%",
@@ -1173,7 +932,7 @@ function MTGChallengeCard.Create(director, expanded)
             bound.foldedTokens:SetClass("collapsed", nowOpen)
             bound.openTokens:SetClass("collapsed", not nowOpen)
             if curtain ~= nil then
-                curtain:SetClass("collapsed", not (nowOpen and bound.inst.resolution ~= nil))
+                curtain:SetClass("collapsed", not (nowOpen and MTGRun.Pending(bound.inst) ~= nil))
             end
         end,
     }
@@ -1250,11 +1009,23 @@ function MTGChallengeCard.Create(director, expanded)
             THCWidgets.BindList(metaColumn, column, NewMetaRow, "setMeta")
             THCWidgets.BindList(noteBand, band, NewMetaRow, "setMeta")
 
-            leadColumn:FireEvent("setColumn")
-            assistColumn:FireEvent("setColumn")
+            local flow = MTGRun.Flow(run, inst)
+            local eff = flow:Effective()
+            local steps = MTGResolver.Steps(run, inst)
+            local undecided = inst.adjudicatedInRound == nil
+            leadColumn:FireEvent("setSeat", flow, eff, {
+                showOffline = undecided,
+                step = steps.lead,
+                verdict = MTGResolver.LeadVerdict(run, inst, director),
+            })
+            assistColumn:FireEvent("setSeat", flow, eff, {
+                showOffline = undecided,
+                step = steps.assist,
+            })
+            leadPrompt:FireEvent("setPrompt")
 
             if curtain ~= nil then
-                curtain:SetClass("collapsed", not (open and inst.resolution ~= nil))
+                curtain:SetClass("collapsed", not (bound.open and MTGRun.Pending(inst) ~= nil))
             end
         end,
 

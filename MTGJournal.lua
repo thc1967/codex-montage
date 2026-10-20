@@ -69,7 +69,7 @@ local function OutcomeText(run, inst, ch)
     if inst.outcome ~= nil then
         return inst.outcome.label or ""
     end
-    local roll = inst.leadRoll
+    local roll = MTGRun.RowRoll(inst, "lead")
     if roll == nil then
         return ""
     end
@@ -171,7 +171,11 @@ local function BuildContent(run)
                 local ch = MTGRun.ChallengeFor(run, inst)
                 local name = ch ~= nil and ch.name or ""
 
-                local lead = inst.lead
+                --What each seat rolled with: pinned when it rolled, worked
+                --out as the board showed it for a grant.
+                local picks = MTGRun.Picks(run, inst)
+
+                local lead = picks.lead
                 if lead ~= nil then
                     local p = MTGRun.Participant(run, lead.charid)
                     add(string.format("|%s| %s | %s | %s | %s | %s |",
@@ -179,11 +183,11 @@ local function BuildContent(run)
                         Cell(p ~= nil and p.name or ""),
                         Cell(name),
                         Cell(TestText(lead)),
-                        Cell(RollText(inst.leadRoll)),
+                        Cell(RollText(MTGRun.RowRoll(inst, "lead"))),
                         Cell(OutcomeText(run, inst, ch))))
                 end
 
-                local assist = inst.assist
+                local assist = picks.assist
                 if assist ~= nil then
                     local p = MTGRun.Participant(run, assist.charid)
                     add(string.format("|%s| *%s* | *%s* | *%s* | *%s* | *%s* |",
@@ -191,7 +195,7 @@ local function BuildContent(run)
                         Cell(p ~= nil and p.name or ""),
                         Cell(name),
                         Cell(TestText(assist)),
-                        Cell(RollText(inst.assistRoll)),
+                        Cell(RollText(MTGRun.RowRoll(inst, "assist"))),
                         Cell(AssistText(run, inst))))
                 end
             end

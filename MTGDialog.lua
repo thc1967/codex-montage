@@ -267,14 +267,18 @@ function MTGDialog.Create()
         --The house resting tints, for the draft card's green Save.
         styles = THCWidgets.tintStyles,
 
+        --Rolls are read back by THCRollFlow's harvest whether this window is
+        --open or not; opening it moves an old run across and catches up.
         monitor = MTGRun.DocPath(),
         refresh = function(shell)
+            MTGRun.MigrateRun()
             shell:Root():FireEventTree("montageChanged")
             shell:SetSubtitle(RunHeaderInfo())
         end,
 
         onCreate = function(shell)
             m_openWindows = m_openWindows + 1
+            MTGResolver.Pump()
             shell:Root():FireEventTree("montageChanged")
         end,
 

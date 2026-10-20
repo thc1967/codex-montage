@@ -103,6 +103,326 @@ function MTGRun.Mutate(description, fn)
     doc:CompleteChange(description)
 end
 
+--- A row's roll record: who stands where, what they rolled, the request out.
+--- The THCRollFlow shape, in `inst.roll`. A row not yet given one reads as
+--- empty without one being written.
+--- @param inst table
+--- @return table
+function MTGRun.Record(inst)
+    return inst.roll or THCRollFlow.NewRecord()
+end
+
+--- Who stands in a seat, as stored: {charid, attrId?, skillId?}, or nil.
+--- @param inst table
+--- @param slot string
+--- @return table|nil
+function MTGRun.Seat(inst, slot)
+    return MTGRun.Record(inst).slots[slot]
+end
+
+--- The roll a seat has made, or nil.
+--- @param inst table
+--- @param slot string
+--- @return table|nil
+function MTGRun.RowRoll(inst, slot)
+    return MTGRun.Record(inst).rolls[slot]
+end
+
+--- The request out on a row, or nil.
+--- @param inst table
+--- @return table|nil
+function MTGRun.Pending(inst)
+    return MTGRun.Record(inst).pending
+end
+
+--- Whether a run still keeps rows the old way, waiting for the Director's
+--- client to move them onto roll records.
+--- @param run MTGRun
+--- @return boolean
+local function HasLegacy(run)
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if inst.lead ~= nil or inst.assist ~= nil or inst.leadRoll ~= nil
+            or inst.assistRoll ~= nil or inst.resolution ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+--- The roll flow over one row's record. Cheap: make one whenever needed. It
+--- reads the row afresh each time, so it never acts on a stale copy.
+--- @param run MTGRun
+--- @param inst table
+--- @return THCRollFlow
+function MTGRun.Flow(run, inst)
+    local instanceId = inst.id
+
+    --The run being changed, while inside one of this flow's changes, so a
+    --hero can be lifted off other rows in the same change.
+    local m_run = nil
+
+    --- The run, the row and its Challenge as they stand now.
+    --- @return MTGRun|nil, table|nil, MTGChallengeDef|nil
+    local function Live()
+        local r = MTGRun.Active()
+        local i = r ~= nil and MTGRun.Instance(r, instanceId) or nil
+        local ch = i ~= nil and MTGRun.ChallengeFor(r, i) or nil
+        return r, i, ch
+    end
+
+    --- @return boolean
+    local function Open()
+        local r, i = Live()
+        return r ~= nil and i ~= nil and r.status == MTGConstants.statusRunning
+            and i.adjudicatedInRound == nil
+    end
+
+    local startCh = MTGRun.ChallengeFor(run, inst)
+    local anySkill = startCh == nil or #startCh:try_get("allowedSkills", {}) == 0
+
+    return THCRollFlow.CreateNew{
+        read = function()
+            local _, i = Live()
+            return i ~= nil and MTGRun.Record(i) or nil
+        end,
+
+        mutate = function(description, fn)
+            MTGRun.Mutate(description, function(r)
+                if HasLegacy(r) then
+                    return
+                end
+                local i = MTGRun.Instance(r, instanceId)
+                if i == nil then
+                    return
+                end
+                local record = i.roll
+                local created = record == nil
+                if created then
+                    record = THCRollFlow.NewRecord()
+                end
+                m_run = r
+                fn(record)
+                m_run = nil
+                if created then
+                    i.roll = record
+                end
+            end)
+        end,
+
+        checkId = MTGConstants.rollCheckId,
+        characteristics = function()
+            local _, _, ch = Live()
+            return ch ~= nil and ch:try_get("allowedCharacteristics", {}) or {}
+        end,
+        skills = function()
+            local _, _, ch = Live()
+            return ch ~= nil and ch:try_get("allowedSkills", {}) or {}
+        end,
+        anySkill = anySkill,
+
+        title = function()
+            local _, _, ch = Live()
+            return ch ~= nil and ch.name or "Montage test"
+        end,
+
+        leadTiers = function()
+            local r, _, ch = Live()
+            if r == nil or ch == nil then
+                return {}
+            end
+            return MTGRules.GetOrDefault(r.moduleId).TierLabels(r, ch)
+        end,
+
+        --An Assist joining after the Lead rolled would earn a grant with no
+        --roll, so nobody is placed once the Lead has rolled.
+        canStage = function(slot)
+            if not Open() then
+                return false
+            end
+            local _, i = Live()
+            local record = MTGRun.Record(i)
+            return record.pending == nil and record.rolls[slot] == nil
+                and record.rolls[THCRollFlow.slotLead] == nil
+        end,
+
+        canEdit = function(slot)
+            if not Open() then
+                return false
+            end
+            local _, i = Live()
+            local record = MTGRun.Record(i)
+            return record.pending == nil and record.rolls[slot] == nil
+        end,
+
+        canRoll = Open,
+
+        --One roll out across every row.
+        sendBlocker = function()
+            local r = MTGRun.Active()
+            for _, row in ipairs(r ~= nil and r:try_get("instances", {}) or {}) do
+                if row.id ~= instanceId and MTGRun.Pending(row) ~= nil then
+                    return "Another row's roll is out."
+                end
+            end
+            return nil
+        end,
+
+        --A hero who has rolled on another open row, or whose roll is out
+        --there, stays put.
+        mayPlace = function(charid)
+            local r = MTGRun.Active()
+            for _, row in ipairs(r ~= nil and r:try_get("instances", {}) or {}) do
+                if row.id ~= instanceId and row.adjudicatedInRound == nil then
+                    local record = MTGRun.Record(row)
+                    for slot, seat in pairs(record.slots) do
+                        if seat.charid == charid and (record.rolls[slot] ~= nil
+                            or (record.pending ~= nil and record.pending.charid == charid)) then
+                            return false
+                        end
+                    end
+                end
+            end
+            return true
+        end,
+
+        --A token is one thing: placing it here lifts it off any other open row.
+        release = function(charid)
+            if m_run == nil then
+                return
+            end
+            for _, row in ipairs(m_run:try_get("instances", {})) do
+                local record = row.roll
+                if row.id ~= instanceId and row.adjudicatedInRound == nil
+                    and record ~= nil and record.pending == nil then
+                    for slot, seat in pairs(record.slots) do
+                        if seat.charid == charid and record.rolls[slot] == nil then
+                            record.slots[slot] = nil
+                        end
+                    end
+                end
+            end
+        end,
+    }
+end
+
+--- What each seat of a row will roll with, or rolled with.
+--- @param run MTGRun
+--- @param inst table
+--- @return {lead: table|nil, assist: table|nil}
+function MTGRun.Picks(run, inst)
+    return MTGRun.Flow(run, inst):Effective()
+end
+
+--- Drop every roll still out, as resetting, ending or clearing the montage
+--- does: a request left behind would block every tool's next roll.
+--- @param run MTGRun|nil
+function MTGRun.AbandonRolls(run)
+    if run == nil then
+        return
+    end
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if MTGRun.Pending(inst) ~= nil then
+            MTGRun.Flow(run, inst):Abandon()
+        end
+    end
+end
+
+--- Move a run whose rows predate roll records onto them. Director only, and
+--- once: it runs while legacy fields remain. A finished roll still sitting in
+--- its request is carried across; anything still out is dropped and offered
+--- again. A seat that rolled keeps exactly what it rolled with.
+function MTGRun.MigrateRun()
+    local run = MTGRun.Active()
+    if not dmhub.isDM or run == nil or not HasLegacy(run) then
+        return
+    end
+
+    local harvested = {}
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        local res = inst.resolution
+        if res ~= nil and res.actionId ~= nil then
+            local status, rollInfo = THCRoll.Harvest(res.actionId, res.actionFor, true)
+            if status == "complete" and rollInfo ~= nil then
+                harvested[inst.id] = { slot = res.slot or THCRollFlow.slotLead, roll = rollInfo }
+            end
+            THCRoll.Cancel(res.actionId)
+        end
+    end
+
+    --- @param roll table|nil
+    --- @return table|nil
+    local function CopyRoll(roll)
+        if roll == nil then
+            return nil
+        end
+        return {
+            total = roll.total,
+            naturalRoll = roll.naturalRoll,
+            boons = roll.boons,
+            banes = roll.banes,
+            tier = roll.tier,
+        }
+    end
+
+    --- @param entry table|nil
+    --- @param rolled boolean
+    --- @return table|nil
+    local function Seat(entry, rolled)
+        if entry == nil or entry.charid == nil then
+            return nil
+        end
+        local seat = { charid = entry.charid }
+        if rolled then
+            seat.attrId = entry.attrId or ""
+            seat.skillId = entry.skillId or ""
+        else
+            if entry.attrOverridden == true then
+                seat.attrId = entry.attrId
+            end
+            if entry.skillId ~= nil and entry.skillId ~= "" then
+                seat.skillId = entry.skillId
+            end
+        end
+        return seat
+    end
+
+    MTGRun.Mutate("Update montage", function(r)
+        for _, inst in ipairs(r:try_get("instances", {})) do
+            if inst.lead ~= nil or inst.assist ~= nil or inst.leadRoll ~= nil
+                or inst.assistRoll ~= nil or inst.resolution ~= nil then
+
+                --A row already moved keeps its record; an old client writing a
+                --legacy field after the move only has it cleared.
+                if inst.roll == nil then
+                    local record = THCRollFlow.NewRecord()
+                    local caught = harvested[inst.id]
+                    local settled = inst.adjudicatedInRound ~= nil
+
+                    record.rolls[THCRollFlow.slotLead] = CopyRoll(inst.leadRoll)
+                    record.rolls[THCRollFlow.slotAssist] = CopyRoll(inst.assistRoll)
+                    if caught ~= nil and record.rolls[caught.slot] == nil then
+                        record.rolls[caught.slot] = CopyRoll(caught.roll)
+                    end
+
+                    for _, slot in ipairs{ THCRollFlow.slotLead, THCRollFlow.slotAssist } do
+                        record.slots[slot] = Seat(inst[slot], settled or record.rolls[slot] ~= nil)
+                    end
+
+                    inst.roll = record
+                end
+
+                inst.lead = nil
+                inst.assist = nil
+                inst.leadRoll = nil
+                inst.assistRoll = nil
+                inst.resolution = nil
+            end
+        end
+    end)
+
+    printf("MTG:: montage moved onto roll records")
+end
+
 --- Characters eligible to be seeded into a Run, on the map. Heroes first, then
 --- by name, with each beastheart companion tucked in directly behind the hero
 --- it belongs to -- the tray reads this order, and a companion beside its owner
@@ -196,6 +516,8 @@ end
 
 --- Throw the Run away. The Definition it came from is untouched.
 function MTGRun.Discard()
+    MTGRun.AbandonRolls(MTGRun.Active())
+
     local doc = MTGRun.Doc()
     doc:BeginChange()
     doc.data.run = nil
@@ -473,6 +795,8 @@ end
 --- Put play back to the beginning. The roster, the excluded challenges and the
 --- limits are Setup choices and survive; only what happened in play is cleared.
 function MTGRun.Reset()
+    MTGRun.AbandonRolls(MTGRun.Active())
+
     MTGRun.Mutate("Reset montage", function(run)
         run.round = 1
         run.paused = false
@@ -578,6 +902,7 @@ local function NewInstance(challengeId, round)
         challengeId = challengeId,
         createdInRound = round,
         adjudicatedInRound = nil,
+        roll = THCRollFlow.NewRecord(),
     }
 end
 
@@ -679,12 +1004,12 @@ end
 
 --- Whether every hero standing on a row has a characteristic to roll. A
 --- Challenge with none allowed derives nothing, so someone has to pick one.
+--- @param run MTGRun
 --- @param inst table
 --- @return boolean
-function MTGRun.HasCharacteristics(inst)
-    for _, slot in ipairs({ "lead", "assist" }) do
-        local placed = inst[slot]
-        if placed ~= nil and (placed.attrId or "") == "" then
+function MTGRun.HasCharacteristics(run, inst)
+    for _, assignment in pairs(MTGRun.Picks(run, inst)) do
+        if (assignment.attrId or "") == "" then
             return false
         end
     end
@@ -744,8 +1069,9 @@ function MTGRun.TrayParticipants(run, round)
     local placed = {}
     for _, inst in ipairs(run:try_get("instances", {})) do
         if inst.adjudicatedInRound == nil then
-            if inst.lead ~= nil then placed[inst.lead.charid] = true end
-            if inst.assist ~= nil then placed[inst.assist.charid] = true end
+            for _, seat in pairs(MTGRun.Record(inst).slots) do
+                placed[seat.charid] = true
+            end
         end
     end
 
@@ -791,9 +1117,10 @@ function MTGRun.HasActedThisRound(run, charid)
     local round = run.round or 1
     for _, inst in ipairs(run:try_get("instances", {})) do
         if inst.adjudicatedInRound == round then
-            if (inst.lead ~= nil and inst.lead.charid == charid)
-                or (inst.assist ~= nil and inst.assist.charid == charid) then
-                return true
+            for _, seat in pairs(MTGRun.Record(inst).slots) do
+                if seat.charid == charid then
+                    return true
+                end
             end
         end
     end
@@ -806,52 +1133,6 @@ function MTGRun.AdvanceRound()
         run.round = (run.round or 1) + 1
         MTGRun.SeedRound(run, run.round)
     end)
-end
-
---- Can this participant take this slot on this row?
---- @param run MTGRun
---- @param inst table
---- @param slot string "lead" or "assist"
---- @param charid string
---- @return boolean
-function MTGRun.CanStage(run, inst, slot, charid)
-    if inst == nil or inst.adjudicatedInRound ~= nil then
-        return false
-    end
-    if inst[slot] ~= nil then
-        return false
-    end
-    --An Assist joining after the Lead rolled would earn a grant with no roll.
-    if inst[slot .. "Roll"] ~= nil or inst.leadRoll ~= nil then
-        return false
-    end
-    local other = cond(slot == "lead", "assist", "lead")
-    if inst[other] ~= nil and inst[other].charid == charid then
-        return false
-    end
-
-    --A rolled slot cannot be emptied, so staging anyway would leave two rows.
-    for _, row in ipairs(run:try_get("instances", {})) do
-        if row.id ~= inst.id and row.adjudicatedInRound == nil then
-            if (row.lead ~= nil and row.lead.charid == charid and row.leadRoll ~= nil)
-                or (row.assist ~= nil and row.assist.charid == charid
-                    and row.assistRoll ~= nil) then
-                return false
-            end
-        end
-    end
-
-    return true
-end
-
---- The Challenge's allowed characteristic this participant scores highest in.
---- Ties go to the order the Director listed them, so the walk is over the
---- allowed list rather than over the characteristics.
---- @param ch MTGChallengeDef
---- @param charid string
---- @return string
-function MTGRun.DeriveCharacteristic(ch, charid)
-    return THCUtils.DeriveCharacteristic(ch:try_get("allowedCharacteristics", {}), charid)
 end
 
 --- Retune one of the rules module's Challenge fields mid-Run.
@@ -892,60 +1173,6 @@ function MTGRun.SetChallengeField(challengeId, fieldId, value)
                 ch:FieldsFor(r.moduleId)[fieldId] = value
                 return
             end
-        end
-    end)
-end
-
---- Record a human's characteristic pick. attrOverridden stops the derivation
---- from stomping it when the Challenge's allowed list is edited later.
---- @param instanceId string
---- @param slot string
---- @param attrId string
-function MTGRun.SetAssignmentCharacteristic(instanceId, slot, attrId)
-    local run = MTGRun.Active()
-    if run == nil then
-        return
-    end
-
-    local inst = MTGRun.Instance(run, instanceId)
-    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
-        return
-    end
-    if inst[slot].attrId == attrId and inst[slot].attrOverridden == true then
-        return
-    end
-
-    MTGRun.Mutate("Choose characteristic", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i == nil or i[slot] == nil then
-            return
-        end
-        i[slot].attrId = attrId
-        i[slot].attrOverridden = true
-    end)
-end
-
---- @param instanceId string
---- @param slot string
---- @param skillId string "" for no skill, which is a valid choice
-function MTGRun.SetAssignmentSkill(instanceId, slot, skillId)
-    local run = MTGRun.Active()
-    if run == nil then
-        return
-    end
-
-    local inst = MTGRun.Instance(run, instanceId)
-    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot] == nil then
-        return
-    end
-    if inst[slot].skillId == skillId then
-        return
-    end
-
-    MTGRun.Mutate("Choose skill", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i ~= nil and i[slot] ~= nil then
-            i[slot].skillId = skillId
         end
     end)
 end
@@ -994,12 +1221,12 @@ function MTGRun.BuildRecap(run)
             local ch = MTGRun.ChallengeFor(run, inst)
 
             for _, slot in ipairs({ "lead", "assist" }) do
-                local a = inst[slot]
+                local a = MTGRun.Seat(inst, slot)
                 local row = a ~= nil and byChar[a.charid] or nil
                 if row ~= nil then
                     if slot == "lead" then
                         row.led = row.led + 1
-                        local roll = inst.leadRoll
+                        local roll = MTGRun.RowRoll(inst, "lead")
                         if roll ~= nil and (row.bestTier == nil or (roll.tier or 0) > row.bestTier) then
                             row.bestTier = roll.tier or 0
                         end
@@ -1013,7 +1240,7 @@ function MTGRun.BuildRecap(run)
                         row.assisted = row.assisted + 1
 
                         --Asked of AssistGrant, not a tier number, so retuning follows.
-                        local assistRoll = inst.assistRoll
+                        local assistRoll = MTGRun.RowRoll(inst, "assist")
                         if assistRoll ~= nil then
                             local grantId = rules.AssistGrant(assistRoll.tier or 1)
                             if grantId ~= nil and grantId ~= "bane" then
@@ -1046,6 +1273,8 @@ function MTGRun.EndRun()
     if run == nil or run.status == MTGConstants.statusEnded then
         return
     end
+
+    MTGRun.AbandonRolls(run)
 
     MTGRun.Mutate("End montage", function(r)
         r.ending = MTGRules.GetOrDefault(r.moduleId).BuildEnding(r)
@@ -1263,79 +1492,56 @@ function MTGRun.AwardVictories()
     end)
 end
 
---- The instance with a roll in flight, or nil.
+--- The row with a roll out, or nil. One at a time across the board.
 --- @param run MTGRun
 --- @return table|nil
 function MTGRun.ResolvingInstance(run)
     for _, inst in ipairs(run:try_get("instances", {})) do
-        if inst.resolution ~= nil then
+        if MTGRun.Pending(inst) ~= nil then
             return inst
         end
     end
     return nil
 end
 
---- @param instanceId string
---- @param resolution table|nil nil takes the row out of resolution
-function MTGRun.SetResolution(instanceId, resolution)
-    local run = MTGRun.Active()
-    if run == nil then
-        return
+--- Whether a prompt's answer still belongs to the Lead roll it was asked
+--- about: a re-roll since then makes it stale.
+--- @param inst table
+--- @param expectRoll nil|{total: number, naturalRoll: number}
+--- @return boolean
+local function RollStill(inst, expectRoll)
+    if expectRoll == nil then
+        return true
     end
-
-    local inst = MTGRun.Instance(run, instanceId)
-    --Clearing something already clear is the common case.
-    if inst == nil or (inst.resolution == nil and resolution == nil) then
-        return
-    end
-
-    MTGRun.Mutate("Montage roll", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i ~= nil then
-            i.resolution = resolution
-        end
-    end)
-end
-
---- @param instanceId string
---- @param slot string
---- @param roll table {total, naturalRoll, boons, banes, tier}
-function MTGRun.RecordRoll(instanceId, slot, roll)
-    local run = MTGRun.Active()
-    if run == nil or MTGRun.Instance(run, instanceId) == nil then
-        return
-    end
-
-    MTGRun.Mutate("Record montage roll", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i == nil then
-            return
-        end
-        i[slot .. "Roll"] = roll
-        i.resolution = nil
-    end)
+    local roll = MTGRun.RowRoll(inst, "lead")
+    return roll ~= nil and roll.total == expectRoll.total and roll.naturalRoll == expectRoll.naturalRoll
 end
 
 --- Write a finished test into the Run: the outcome sticks, progress moves,
 --- the skills are spent, and the row freezes as its own record. A reopening
---- module gets a fresh row in the same round to try again on.
+--- module gets a fresh row in the same round to try again on. Refused while a
+--- roll is out on the row, or when the Lead roll it was decided on has since
+--- been re-rolled.
 --- @param instanceId string
 --- @param outcome table {id, label, tone}
-function MTGRun.Adjudicate(instanceId, outcome, alsoGrant)
+--- @param alsoGrant nil|boolean
+--- @param expectRoll nil|{total: number, naturalRoll: number} the Lead roll this decides
+function MTGRun.Adjudicate(instanceId, outcome, alsoGrant, expectRoll)
     local active = MTGRun.Active()
     if active == nil then
         return
     end
 
     local staged = MTGRun.Instance(active, instanceId)
-    if staged == nil or staged.adjudicatedInRound ~= nil
-        or MTGRun.ChallengeFor(active, staged) == nil then
+    if staged == nil or staged.adjudicatedInRound ~= nil or MTGRun.Pending(staged) ~= nil
+        or not RollStill(staged, expectRoll) or MTGRun.ChallengeFor(active, staged) == nil then
         return
     end
 
     MTGRun.Mutate("Resolve montage test", function(run)
         local inst = MTGRun.Instance(run, instanceId)
-        if inst == nil or inst.adjudicatedInRound ~= nil then
+        if inst == nil or inst.adjudicatedInRound ~= nil or MTGRun.Pending(inst) ~= nil
+            or not RollStill(inst, expectRoll) then
             return
         end
 
@@ -1355,9 +1561,9 @@ function MTGRun.Adjudicate(instanceId, outcome, alsoGrant)
 
         rules.ApplyProgress(run, ch, inst, 1)
 
-        for _, slot in ipairs({ "lead", "assist" }) do
-            local a = inst[slot]
-            if a ~= nil and a.skillId ~= nil and a.skillId ~= "" then
+        --Only a skill someone chose, or a seat rolled with, is spent.
+        for _, a in pairs(MTGRun.Record(inst).slots) do
+            if a.skillId ~= nil and a.skillId ~= "" then
                 local p = MTGRun.Participant(run, a.charid)
                 if p ~= nil then
                     p:get_or_add("skillsUsed", {})[a.skillId] = true
@@ -1371,6 +1577,7 @@ function MTGRun.Adjudicate(instanceId, outcome, alsoGrant)
                 id = dmhub.GenerateGuid(),
                 challengeId = ch.id,
                 createdInRound = run.round or 1,
+                roll = THCRollFlow.NewRecord(),
             }
             instances[#instances + 1] = copy
             inst.reopenedAs = copy.id
@@ -1392,9 +1599,8 @@ local function Unadjudicate(run, inst)
         MTGRules.GetOrDefault(run.moduleId).ApplyProgress(run, ch, inst, -1)
     end
 
-    for _, slot in ipairs({ "lead", "assist" }) do
-        local a = inst[slot]
-        if a ~= nil and a.skillId ~= nil and a.skillId ~= "" then
+    for _, a in pairs(MTGRun.Record(inst).slots) do
+        if a.skillId ~= nil and a.skillId ~= "" then
             local p = MTGRun.Participant(run, a.charid)
             if p ~= nil then
                 p:get_or_add("skillsUsed", {})[a.skillId] = nil
@@ -1405,7 +1611,7 @@ local function Unadjudicate(run, inst)
     if inst.reopenedAs ~= nil then
         local instances = run:get_or_add("instances", {})
         for i, other in ipairs(instances) do
-            if other.id == inst.reopenedAs and other.lead == nil and other.assist == nil then
+            if other.id == inst.reopenedAs and next(MTGRun.Record(other).slots) == nil then
                 table.remove(instances, i)
                 break
             end
@@ -1418,8 +1624,8 @@ local function Unadjudicate(run, inst)
 end
 
 --- Hand a Challenge to the Lead without a roll. The skills-spent bookkeeping
---- in Adjudicate only fires on a slot that actually chose a skill, so a grant
---- taken with no skill selected costs nobody anything.
+--- in Adjudicate only fires on a seat with a chosen skill, so a grant taken
+--- with no skill chosen costs nobody anything.
 --- @param instanceId string
 function MTGRun.Grant(instanceId)
     local run = MTGRun.Active()
@@ -1428,7 +1634,8 @@ function MTGRun.Grant(instanceId)
     end
 
     local inst = MTGRun.Instance(run, instanceId)
-    if inst == nil or inst.adjudicatedInRound ~= nil or inst.lead == nil then
+    if inst == nil or inst.adjudicatedInRound ~= nil or MTGRun.Seat(inst, "lead") == nil
+        or MTGRun.Pending(inst) ~= nil then
         return
     end
 
@@ -1436,14 +1643,20 @@ function MTGRun.Grant(instanceId)
         MTGRules.GetOrDefault(run.moduleId).GrantedOutcome(), true)
 end
 
---- Unwind a whole test -- granted or rolled, both slots -- back to the state
---- the row was in before anyone was asked for anything. The staged heroes and
---- their picks stay put; only what the test produced goes.
+--- Unwind a whole test -- granted or rolled, both seats -- back to the state
+--- the row was in before anyone was asked for anything. The heroes and their
+--- picks stay put; only what the test produced goes. A roll still out is
+--- dropped first.
 --- @param instanceId string
 function MTGRun.UndoTest(instanceId)
     local run = MTGRun.Active()
-    if run == nil or MTGRun.Instance(run, instanceId) == nil then
+    local inst = run ~= nil and MTGRun.Instance(run, instanceId) or nil
+    if inst == nil then
         return
+    end
+
+    if MTGRun.Pending(inst) ~= nil then
+        MTGRun.Flow(run, inst):Abandon()
     end
 
     MTGRun.Mutate("Undo montage test", function(r)
@@ -1453,8 +1666,13 @@ function MTGRun.UndoTest(instanceId)
         end
         Unadjudicate(r, i)
         i.granted = nil
-        i.leadRoll = nil
-        i.assistRoll = nil
+        local record = i.roll
+        if record ~= nil then
+            record.rolls = {}
+            record.previous = {}
+            record.rerolled = {}
+            record.pending = nil
+        end
     end)
 end
 
@@ -1464,8 +1682,7 @@ end
 function MTGRun.HasTestToUndo(run, inst)
     return inst.adjudicatedInRound ~= nil
         or inst.granted == true
-        or inst.leadRoll ~= nil
-        or inst.assistRoll ~= nil
+        or next(MTGRun.Record(inst).rolls) ~= nil
 end
 
 --- May this client move this participant's token? The Director may move
@@ -1491,83 +1708,20 @@ function MTGRun.HideFromPlayers()
     GameHud.HidePresentedDialog()
 end
 
---- Who this slot will accept. Free participants, plus anyone standing in
---- another open slot: placing them there lifts them out of it.
+--- Who an empty seat on this row offers: everyone the row may take. Placing
+--- one lifts them off any other open row where they have not rolled.
 --- @param run MTGRun
 --- @param inst table
---- @param slot string "lead" or "assist"
---- @return MTGParticipant[]
-function MTGRun.StageOptions(run, inst, slot)
+--- @return {charid: string, name: string}[]
+function MTGRun.StageOptions(run, inst)
+    local flow = MTGRun.Flow(run, inst)
     local result = {}
     for _, p in ipairs(MTGRun.ActiveParticipants(run)) do
-        if MTGRun.CanStage(run, inst, slot, p.charid) then
-            result[#result + 1] = p
+        if flow.host.mayPlace(p.charid) then
+            result[#result + 1] = { charid = p.charid, name = p.name }
         end
     end
     return result
-end
-
---- Place a participant, lifting them off wherever they were. Their token is
---- one thing: it is in the tray, or in a Lead slot, or in an Assist slot.
---- @param instanceId string
---- @param slot string
---- @param charid string
-function MTGRun.Stage(instanceId, slot, charid)
-    local active = MTGRun.Active()
-    if active == nil
-        or not MTGRun.CanStage(active, MTGRun.Instance(active, instanceId), slot, charid) then
-        return
-    end
-
-    MTGRun.Mutate("Place participant", function(run)
-        local inst = MTGRun.Instance(run, instanceId)
-        if not MTGRun.CanStage(run, inst, slot, charid) then
-            return
-        end
-
-        for _, other in ipairs(run:try_get("instances", {})) do
-            if other.adjudicatedInRound == nil then
-                if other.lead ~= nil and other.lead.charid == charid and other.leadRoll == nil then
-                    other.lead = nil
-                end
-                if other.assist ~= nil and other.assist.charid == charid and other.assistRoll == nil then
-                    other.assist = nil
-                end
-            end
-        end
-
-        local ch = MTGRun.ChallengeFor(run, inst)
-        inst[slot] = {
-            charid = charid,
-            skillId = "",
-            attrId = ch ~= nil and MTGRun.DeriveCharacteristic(ch, charid) or "",
-            attrOverridden = false,
-        }
-    end)
-end
-
---- Take a participant out of a slot and hand their token back to the tray.
---- @param instanceId string
---- @param slot string
-function MTGRun.Unstage(instanceId, slot)
-    local run = MTGRun.Active()
-    if run == nil then
-        return
-    end
-
-    local inst = MTGRun.Instance(run, instanceId)
-    if inst == nil or inst.adjudicatedInRound ~= nil or inst[slot .. "Roll"] ~= nil
-        or inst[slot] == nil then
-        return
-    end
-
-    MTGRun.Mutate("Remove participant", function(r)
-        local i = MTGRun.Instance(r, instanceId)
-        if i ~= nil then
-            i[slot] = nil
-            --A Lead leaving does not evict the Assist; the row simply waits.
-        end
-    end)
 end
 
 --- @param run MTGRun
@@ -1582,19 +1736,16 @@ function MTGRun.Participant(run, charid)
     return nil
 end
 
---- Lift a participant out of whatever open slot holds them.
+--- Hand a participant back to the tray from whatever open seat holds them.
 --- @param charid string
 function MTGRun.UnstageParticipant(charid)
-    MTGRun.Mutate("Remove participant", function(run)
-        for _, inst in ipairs(run:try_get("instances", {})) do
-            if inst.adjudicatedInRound == nil then
-                if inst.lead ~= nil and inst.lead.charid == charid and inst.leadRoll == nil then
-                    inst.lead = nil
-                end
-                if inst.assist ~= nil and inst.assist.charid == charid and inst.assistRoll == nil then
-                    inst.assist = nil
-                end
-            end
+    local run = MTGRun.Active()
+    if run == nil then
+        return
+    end
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if inst.adjudicatedInRound == nil then
+            MTGRun.Flow(run, inst):Return(charid)
         end
-    end)
+    end
 end

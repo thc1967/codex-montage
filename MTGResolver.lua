@@ -1,249 +1,111 @@
 local mod = dmhub.GetModLoading()
 
---- Asks a Participant's player for a test and harvests the result. The
---- conversation itself -- request, summary dialog, reading the answer back --
---- is THCRoll's; what stays here is which roll a row still needs and what the
---- montage does with the result.
+--- Moves a row's rolls along. The rolls themselves are THCRollFlow's; what
+--- stays here is the montage's reading of them -- the Assist's grant, the
+--- Lead's outcome and the module's question -- and the Director's taking of
+--- the Lead's roll.
 MTGResolver = {}
 
---- The player-facing roll. Only the assist grant is ours; THCRoll supplies the
---- rest of the check.
-THCRoll.RegisterCheck{
-    id = MTGConstants.rollCheckId,
-    modifierRollType = MTGConstants.modifierRollType,
+THCRollFlow.RegisterCheck(MTGConstants.rollCheckId, MTGConstants.modifierRollType)
 
-    DecorateModifiers = function(check, creature, options, result)
-        local grant = check.info.assistGrant
-        if grant == nil or grant == "" then
-            return
-        end
-
-        local described = THCRoll.DescribeGrant(creature, options, grant,
-            check.info.assistName or "Assisted",
-            check.info.assistDescription or "An ally assisted this test.",
-            MTGConstants.modifierRollType)
-        if described ~= nil then
-            result[#result + 1] = described
-        end
-    end,
-}
-
---- The modtype the assist's roll earned the Lead, or nil when the assist has
---- not rolled. Derived rather than stored, so undoing the assist roll takes
---- the grant with it.
+--- The modtype the Assist's roll earned the Lead, or nil when the Assist has
+--- not rolled. Derived rather than stored, so undoing the roll takes it too.
 --- @param run MTGRun
 --- @param inst table
 --- @return string|nil
 function MTGResolver.AssistGrant(run, inst)
-    if inst.assistRoll == nil then
+    local roll = MTGRun.RowRoll(inst, "assist")
+    if roll == nil then
         return nil
     end
-    return MTGRules.GetOrDefault(run.moduleId).AssistGrant(inst.assistRoll.tier or 1)
+    return MTGRules.GetOrDefault(run.moduleId).AssistGrant(roll.tier or 1)
 end
 
---- Ask this Participant's player to roll.
+--- Why this row's next roll cannot go out now, or nil when it can.
 --- @param run MTGRun
---- @param ch MTGChallengeDef
---- @param assignment table
---- @param grant string|nil a modtype the assist earned this roller
---- @param grantFrom string|nil who earned it
---- @param role string "lead" or "assist"
---- @return string|nil actionId
-local function SendRequest(run, ch, assignment, grant, grantFrom, role)
-    local attrName = THCUtils.CharacteristicName(assignment.attrId)
-    local skills = {}
-    if assignment.skillId ~= nil and assignment.skillId ~= "" then
-        skills[1] = assignment.skillId
+--- @param inst table
+--- @return string|nil
+function MTGResolver.RollBlocker(run, inst)
+    if MTGRun.Seat(inst, "lead") == nil then
+        return "Put a Hero in the Lead slot first"
     end
-
-    local title = ch.name or "Montage test"
-    if role == "assist" then
-        title = string.format("Assist: %s", title)
-    end
-
-    local explanation = string.format("%s (%s)", title, attrName)
-
-    --options.tiers, NOT info, is what the roll dialog reads.
-    local rules = MTGRules.GetOrDefault(run.moduleId)
-
-    local tiers = nil
-    if role == "assist" then
-        --An assist hands the Lead a grant, so AssistGrant is the text, not the outcomes.
-        tiers = {}
-        for tier = 1, 3 do
-            local grantId = rules.AssistGrant(tier)
-            tiers[tier] = string.format("The Lead rolls with %s %s",
-                cond(grantId == "edge", "an", "a"),
-                string.gsub(grantId, "_", " "))
-        end
-    elseif rules.TierLabels ~= nil then
-        tiers = rules.TierLabels(run, ch)
-    end
-
-    local check = RollCheck.new{
-        type = MTGConstants.rollCheckId,
-        id = MTGConstants.rollCheckId,
-        text = title,
-        explanation = explanation,
-        skills = skills,
-        modifiers = {},
-        options = tiers ~= nil and { tiers = tiers } or nil,
-        info = {
-            attrid = assignment.attrId,
-            explanation = explanation,
-            assistGrant = grant,
-            assistName = grant ~= nil and string.format("Assisted by %s", grantFrom or "an ally") or nil,
-            assistDescription = grant ~= nil and string.format("%s's assist gave you a %s.",
-                grantFrom or "An ally", string.gsub(grant, "_", " ")) or nil,
-        },
-    }
-
-    return THCRoll.Send{
-        title = title,
-        charid = assignment.charid,
-        check = check,
-    }
-end
-
---- Ask for the next roll this row still needs: the Assist goes first, because
---- what it earns rides on the Lead's roll.
---- @param instanceId string
-function MTGResolver.Trigger(instanceId)
-    local run = MTGRun.Active()
-    if run == nil then
-        return
-    end
-
-    local inst = MTGRun.Instance(run, instanceId)
-    if inst == nil or inst.adjudicatedInRound ~= nil or inst.lead == nil then
-        return
-    end
-
     --A roll with no characteristic has nothing to add; hold it until one is picked.
-    if not MTGRun.HasCharacteristics(inst) then
-        return
+    if not MTGRun.HasCharacteristics(run, inst) then
+        return "Pick a characteristic first"
     end
-
-    --One at a time: a second would displace the shared summary dialog and lose that roll.
-    local busy = MTGRun.ResolvingInstance(run)
-    if busy ~= nil and busy.id ~= instanceId then
-        return
+    local flow = MTGRun.Flow(run, inst)
+    if not flow:CanRoll() then
+        return "This row cannot roll now."
     end
-
-    local ch = MTGRun.ChallengeFor(run, inst)
-    if ch == nil then
-        return
-    end
-
-    local slot = "lead"
-    local assignment = inst.lead
-    local grant, grantFrom = nil, nil
-
-    if inst.assist ~= nil and inst.assistRoll == nil then
-        slot = "assist"
-        assignment = inst.assist
-    elseif inst.assist ~= nil then
-        grant = MTGResolver.AssistGrant(run, inst)
-        local p = MTGRun.Participant(run, inst.assist.charid)
-        grantFrom = p ~= nil and p.name or nil
-    end
-
-    --Must land before the request, or the roll dialog beats the curtain to the screen.
-    local startedAt = dmhub.serverTime
-
-    MTGRun.SetResolution(instanceId, {
-        phase = slot .. "_roll",
-        slot = slot,
-        actionFor = assignment.charid,
-        startedAt = startedAt,
-    })
-
-    local actionId = SendRequest(run, ch, assignment, grant, grantFrom, slot)
-    if actionId == nil then
-        MTGRun.SetResolution(instanceId, nil)
-        return
-    end
-
-    --A fresh table: assigning the document's own back over itself drops the new field.
-    MTGRun.SetResolution(instanceId, {
-        phase = slot .. "_roll",
-        slot = slot,
-        actionId = actionId,
-        actionFor = assignment.charid,
-        startedAt = startedAt,
-    })
+    return flow:SendBlocker()
 end
 
---- Take a row out of resolution and drop its request.
+--- Send whichever roll this row needs next. Director only.
 --- @param instanceId string
---- @param actionId string|nil
-function MTGResolver.Cancel(instanceId, actionId)
-    THCRoll.Cancel(actionId)
-    MTGRun.SetResolution(instanceId, nil)
+function MTGResolver.Roll(instanceId)
+    local run = MTGRun.Active()
+    local inst = run ~= nil and MTGRun.Instance(run, instanceId) or nil
+    if not dmhub.isDM or inst == nil or MTGResolver.RollBlocker(run, inst) ~= nil then
+        return
+    end
+    MTGRun.Flow(run, inst):RollNext()
 end
 
---- Move any finished roll out of its request and onto the Run. Stateless and
---- idempotent: every input is cloud state, so a Director who reloads or who
---- put the montage away picks up wherever the Run says it is.
+--- Take back the roll out on this row. The step is offered again.
+--- @param instanceId string
+function MTGResolver.Cancel(instanceId)
+    local run = MTGRun.Active()
+    local inst = run ~= nil and MTGRun.Instance(run, instanceId) or nil
+    if inst ~= nil then
+        MTGRun.Flow(run, inst):Abandon()
+    end
+end
+
+--- Read back any roll that has come in, on any row. Director only; run by
+--- THCRollFlow's harvest whether or not the montage is open.
 function MTGResolver.Pump()
     if not dmhub.isDM then
         return
     end
 
+    --A legacy field left by an old client would refuse the roll's recording.
+    MTGRun.MigrateRun()
+
     local run = MTGRun.Active()
-    if run == nil or run.status ~= MTGConstants.statusRunning then
+    if run == nil then
         return
     end
-
-    local inst = MTGRun.ResolvingInstance(run)
-    if inst == nil then
-        return
+    for _, inst in ipairs(run:try_get("instances", {})) do
+        if MTGRun.Pending(inst) ~= nil then
+            local ok, err = pcall(function()
+                MTGRun.Flow(run, inst):Pump()
+            end)
+            if not ok then
+                printf("MTG:: harvest failed: %s", tostring(err))
+            end
+        end
     end
+end
 
-    local res = inst.resolution
+THCRollFlow.RegisterHarvester("montage", function()
+    MTGResolver.Pump()
+end)
 
-    --In flight, not lost: the nil lookup below would otherwise wipe it.
-    if res.actionId == nil then
-        return
+--- What the Lead's roll comes to: as decided, once decided, and read off the
+--- roll by the row's rules before that.
+--- @param run MTGRun
+--- @param inst table
+--- @return table|nil {id, label, tone}
+function MTGResolver.Outcome(run, inst)
+    if inst.outcome ~= nil then
+        return inst.outcome
     end
-
-    local status, rollInfo = THCRoll.Harvest(res.actionId, res.actionFor)
-
-    --A player dismissing their roll takes the request, and the dialog, down.
-    if status == "cancelled" then
-        MTGResolver.Cancel(inst.id, res.actionId)
-        return
-    end
-
-    if status == "waiting" then
-        return
-    end
-
-    if status ~= "complete" then
-        MTGRun.SetResolution(inst.id, nil)
-        return
-    end
-
-    local slot = res.slot or "lead"
-    MTGRun.RecordRoll(inst.id, slot, rollInfo)
-
-    if slot == "assist" then
-        MTGResolver.Trigger(inst.id)
-        return
-    end
-
+    local roll = MTGRun.RowRoll(inst, "lead")
     local ch = MTGRun.ChallengeFor(run, inst)
-    if ch == nil then
-        return
+    if roll == nil or ch == nil then
+        return nil
     end
-
-    local rules = MTGRules.GetOrDefault(run.moduleId)
-    local outcome = rules.RollToOutcome(run, ch, rollInfo)
-
-    --A module may refuse, leaving the row waiting on a human.
-    if rules.PromptAfterRoll(run, ch, outcome) == nil then
-        MTGRun.Adjudicate(inst.id, outcome)
-    end
+    return MTGRules.GetOrDefault(run.moduleId).RollToOutcome(run, ch, roll)
 end
 
 --- The question this row is waiting on, or nil when it is not waiting.
@@ -251,30 +113,119 @@ end
 --- @param inst table
 --- @return table|nil
 function MTGResolver.PendingPrompt(run, inst)
-    if inst.leadRoll == nil or inst.adjudicatedInRound ~= nil then
+    if MTGRun.RowRoll(inst, "lead") == nil or inst.adjudicatedInRound ~= nil
+        or MTGRun.Pending(inst) ~= nil then
         return nil
     end
-
     local ch = MTGRun.ChallengeFor(run, inst)
     if ch == nil then
         return nil
     end
-
     local rules = MTGRules.GetOrDefault(run.moduleId)
-    return rules.PromptAfterRoll(run, ch, rules.RollToOutcome(run, ch, inst.leadRoll))
+    return rules.PromptAfterRoll(run, ch, MTGResolver.Outcome(run, inst))
 end
 
---- The Director's client drives resolution on a tick rather than from the
---- montage panel: hiding the montage to run combat destroys that panel, and
---- the harvest has to survive the trip.
-local function Tick()
-    if mod.unloaded then
+--- The Lead roll an answer is about, so a re-roll since makes it stale.
+--- @param inst table
+--- @return nil|{total: number, naturalRoll: number}
+local function Stamp(inst)
+    local roll = MTGRun.RowRoll(inst, "lead")
+    if roll == nil then
+        return nil
+    end
+    return { total = roll.total, naturalRoll = roll.naturalRoll }
+end
+
+--- The Director takes the Lead's roll and the row is decided by its rules.
+--- A row whose module asks a question is decided by its answer instead.
+--- @param instanceId string
+function MTGResolver.AcceptRow(instanceId)
+    local run = MTGRun.Active()
+    local inst = run ~= nil and MTGRun.Instance(run, instanceId) or nil
+    if not dmhub.isDM or inst == nil or inst.adjudicatedInRound ~= nil
+        or MTGRun.Pending(inst) ~= nil or MTGResolver.PendingPrompt(run, inst) ~= nil then
         return
     end
-    if dmhub.isDM then
-        MTGResolver.Pump()
+    local outcome = MTGResolver.Outcome(run, inst)
+    if outcome == nil then
+        return
     end
-    dmhub.Schedule(0.5, Tick)
+    MTGRun.Adjudicate(instanceId, outcome, false, Stamp(inst))
 end
 
-dmhub.Schedule(0.5, Tick)
+--- Answer the module's question about the Lead's roll. Whoever rolled may,
+--- and the Director: this is a plain change to the run, not a roll.
+--- @param instanceId string
+--- @param outcome table
+--- @param stamp nil|{total: number, naturalRoll: number} the roll the question was asked of
+function MTGResolver.Answer(instanceId, outcome, stamp)
+    MTGRun.Adjudicate(instanceId, outcome, false, stamp)
+end
+
+--- The roll an answer is being given about, for the prompt's buttons.
+--- @param inst table
+--- @return nil|{total: number, naturalRoll: number}
+function MTGResolver.Stamp(inst)
+    return Stamp(inst)
+end
+
+--- The Lead's result as a line on the seat: the outcome by the row's rules.
+--- Kept from the table while the difficulty is hidden and nothing is decided,
+--- since the outcome would give the difficulty away.
+--- @param run MTGRun
+--- @param inst table
+--- @param director boolean
+--- @return string|nil markdown
+function MTGResolver.LeadVerdict(run, inst, director)
+    if MTGRun.RowRoll(inst, "lead") == nil then
+        return nil
+    end
+    local ch = MTGRun.ChallengeFor(run, inst)
+    if not director and inst.adjudicatedInRound == nil and ch ~= nil
+        and MTGRun.IsDifficultyHidden(run, ch.id) then
+        return nil
+    end
+    local outcome = MTGResolver.Outcome(run, inst)
+    if outcome == nil or (outcome.label or "") == "" then
+        return nil
+    end
+    return string.format("**%s**", outcome.label)
+end
+
+--- The Director's next step on each seat, beside its Re-roll: the Lead's turn
+--- once the Assist is in, then taking the Lead's roll. None while a roll is
+--- out, once the row is decided, or while the module waits on its question.
+--- @param run MTGRun
+--- @param inst table
+--- @return {lead: table|nil, assist: table|nil}
+function MTGResolver.Steps(run, inst)
+    local steps = {}
+    if inst.adjudicatedInRound ~= nil or MTGRun.Pending(inst) ~= nil then
+        return steps
+    end
+
+    local instanceId = inst.id
+    if MTGRun.RowRoll(inst, "lead") ~= nil then
+        if MTGResolver.PendingPrompt(run, inst) == nil then
+            steps.lead = {
+                text = "Accept",
+                enabled = true,
+                tooltip = "Take this roll: the row is decided and can no longer re-roll.",
+                run = function()
+                    MTGResolver.AcceptRow(instanceId)
+                end,
+            }
+        end
+    elseif MTGRun.RowRoll(inst, "assist") ~= nil then
+        local blocker = MTGResolver.RollBlocker(run, inst)
+        steps.assist = {
+            text = "Continue",
+            enabled = blocker == nil,
+            tooltip = blocker or "Ask the Lead to roll.",
+            run = function()
+                MTGResolver.Roll(instanceId)
+            end,
+        }
+    end
+    return steps
+end

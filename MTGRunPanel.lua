@@ -311,11 +311,13 @@ function MTGRunPanel.Create(opts)
                 end
 
                 local entries = {}
-                if item.inst.lead ~= nil then
-                    entries[#entries + 1] = { p = item.inst.lead, lead = true }
+                local lead = MTGRun.Seat(item.inst, "lead")
+                if lead ~= nil then
+                    entries[#entries + 1] = { p = lead, lead = true }
                 end
-                if item.inst.assist ~= nil then
-                    entries[#entries + 1] = { p = item.inst.assist, lead = false }
+                local assist = MTGRun.Seat(item.inst, "assist")
+                if assist ~= nil then
+                    entries[#entries + 1] = { p = assist, lead = false }
                 end
                 THCWidgets.BindList(tokens, entries, SummaryToken, "setToken")
 
