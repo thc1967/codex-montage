@@ -432,6 +432,55 @@ function MTGRunPanel.Create(opts)
         end,
     } or nil
 
+    --Puts the Run's backdrop back after a pause or another scene took it down.
+    local backdropButton = director and gui.Button{
+        classes = { "sizeL" },
+        text = "Show Backdrop",
+        halign = "left",
+        valign = "center",
+        lmargin = 8,
+        data = { tip = nil },
+
+        monitorGame = FullscreenDisplay.GetDocumentSnapshot().path,
+        refreshGame = function(element)
+            element:FireEvent("syncBackdrop")
+        end,
+
+        create = function(element)
+            element:FireEvent("syncBackdrop")
+        end,
+
+        syncBackdrop = function(element)
+            local run = MTGRun.Active()
+            local image = run ~= nil and run:try_get("image", "") or ""
+            local display = FullscreenDisplay.GetDocumentSnapshot().data
+            local showing = display.show == "all" and display.coverart == image
+
+            local tip = "Put the montage's backdrop back on everyone's screen"
+            if image == "" then
+                tip = "This montage has no backdrop."
+            elseif showing then
+                tip = "The backdrop is already showing."
+            end
+            element:SetClass("disabled", image == "" or showing)
+            element.data.tip = tip
+        end,
+
+        --A tooltip set ahead of time shows once and is gone, so the reason is
+        --kept on the button and raised by the hover itself.
+        hover = function(element)
+            THCWidgets.ShowTip(element, element.data.tip)
+        end,
+
+        click = function(element)
+            local run = MTGRun.Active()
+            if element:HasClass("disabled") or run == nil then
+                return
+            end
+            THCUtils.ShowScene(run:try_get("image", ""), "all", true)
+        end,
+    } or nil
+
     local resultPanel
 
     --- One round's header over the body its cards go in. Built once for its
@@ -628,6 +677,9 @@ function MTGRunPanel.Create(opts)
 
             if pauseButton ~= nil then
                 pauseButton.text = cond(run.paused == true, "Resume", "Pause")
+            end
+            if backdropButton ~= nil then
+                backdropButton:FireEvent("syncBackdrop")
             end
 
             local description = run:try_get("description", "")
@@ -834,6 +886,8 @@ function MTGRunPanel.Create(opts)
                 MTGRun.PresentToPlayers(element)
             end,
         },
+
+        backdropButton,
     }
 
     local rightGroup = gui.Panel{
