@@ -436,6 +436,7 @@ function MTGRunPanel.Create(opts)
     local backdropButton = director and gui.Button{
         classes = { "sizeL" },
         text = "Show Backdrop",
+        width = 110,
         halign = "left",
         valign = "center",
         lmargin = 8,
