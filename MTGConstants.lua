@@ -21,6 +21,12 @@ MTGConstants.listRightMargin = 12
 MTGConstants.playerWindowWidth = 800
 MTGConstants.playerWindowHeight = 600
 
+--- How solid the window's background is while a montage is running, 0 (clear) to 1 (opaque).
+MTGConstants.runBackgroundOpacity = 0.85
+
+--- How solid the bordered frames inside the window are while a montage is running, 0 (clear) to 1 (opaque).
+MTGConstants.runFrameOpacity = 0.75
+
 --- The run panel's description well: one line of small text when folded,
 --- this many lines, scrolling, when open.
 MTGConstants.descriptionLineHeight = 18

@@ -70,6 +70,16 @@ local function RunHeaderInfo()
         run.round or 1)
 end
 
+--- Fades the window while a run is in play so the table shows through.
+--- @param shell DialogShell
+local function ApplyRunFade(shell)
+    local run = MTGRun.Active()
+    THCWidgets.ApplyWindowFade(shell,
+        run ~= nil and run.status == MTGConstants.statusRunning,
+        MTGConstants.runBackgroundOpacity,
+        MTGConstants.runFrameOpacity)
+end
+
 --- One cell of a footer. Cells are equal thirds unless a state asks for its
 --- own split, so contents land left, centre and right whichever a state fills.
 --- @param slot nil|Panel
@@ -274,12 +284,14 @@ function MTGDialog.Create()
             MTGRun.MigrateRun()
             shell:Root():FireEventTree("montageChanged")
             shell:SetSubtitle(RunHeaderInfo())
+            ApplyRunFade(shell)
         end,
 
         onCreate = function(shell)
             m_openWindows = m_openWindows + 1
             MTGResolver.Pump()
             shell:Root():FireEventTree("montageChanged")
+            ApplyRunFade(shell)
         end,
 
         onDestroy = function()
@@ -370,11 +382,13 @@ function MTGDialog.CreatePlayerView()
         refresh = function(shell)
             shell:Root():FireEventTree("montageChanged")
             Apply(shell)
+            ApplyRunFade(shell)
         end,
 
         onCreate = function(shell)
             m_openWindows = m_openWindows + 1
             Apply(shell)
+            ApplyRunFade(shell)
         end,
 
         onDestroy = function()
