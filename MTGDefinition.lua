@@ -177,8 +177,6 @@ function MTGDefinition:SettingValue(moduleId, field)
     return value
 end
 
-mod:RegisterDocumentForCheckpointBackups(MTGConstants.libraryDoc)
-
 --- The filing cabinet itself lives in THCCore; what is montage-specific is the
 --- noun on an undo entry and the defaults a new montage starts with.
 local g_library = THCLibrary.CreateNew{

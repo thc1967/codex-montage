@@ -67,8 +67,6 @@ function MTGRun.CreateNew(args)
     return MTGRun.new(args)
 end
 
-mod:RegisterDocumentForCheckpointBackups(MTGConstants.activeRunDoc)
-
 --- @return LuaCodeModDocumentSnapshot
 function MTGRun.Doc()
     return mod:GetDocumentSnapshot(MTGConstants.activeRunDoc)
